@@ -1,0 +1,319 @@
+import { useState, useEffect } from 'react';
+import { Camera, Clock, LogIn, Loader2 } from 'lucide-react';
+import { cn } from '../lib/utils';
+import { db, auth, storage } from '../lib/firebase';
+import { collection, addDoc, updateDoc, doc, Timestamp, query, where, orderBy, limit, onSnapshot, arrayUnion } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { signInWithEmailAndPassword, onAuthStateChanged, type User } from 'firebase/auth';
+
+export default function JobLogs() {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  
+  // Auth State
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // Job State
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [startTime, setStartTime] = useState<Date | null>(null);
+  const [elapsedTime, setElapsedTime] = useState('00:00:00');
+  const [jobPhotos, setJobPhotos] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+
+  // 1. Listen for Auth State
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Listen for Active Jobs
+  useEffect(() => {
+    if (!user) return;
+
+    // Query for any job that is "in_progress" for this user
+    const q = query(
+      collection(db, 'job_logs'),
+      where('userId', '==', user.uid),
+      where('status', '==', 'in_progress'),
+      orderBy('startTime', 'desc'),
+      limit(1)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const jobDoc = snapshot.docs[0];
+        const data = jobDoc.data();
+        setActiveJobId(jobDoc.id);
+        setStartTime(data.startTime.toDate());
+        setJobPhotos(data.photos || []);
+      } else {
+        setActiveJobId(null);
+        setStartTime(null);
+        setElapsedTime('00:00:00');
+        setJobPhotos([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // 3. Timer Logic
+  useEffect(() => {
+    let interval: any;
+    if (activeJobId && startTime) {
+      interval = setInterval(() => {
+        const now = new Date();
+        const diff = now.getTime() - startTime.getTime();
+        
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+        setElapsedTime(
+          `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+        );
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [activeJobId, startTime]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      setAuthError('');
+    } catch (err: any) {
+      setAuthError('Invalid email or password');
+    }
+  };
+
+  const handleClockIn = async () => {
+    if (!user) return;
+    try {
+      await addDoc(collection(db, 'job_logs'), {
+        userId: user.uid,
+        startTime: Timestamp.now(),
+        status: 'in_progress',
+        jobType: 'General', 
+        photos: []
+      });
+    } catch (err) {
+      console.error("Error clocking in:", err);
+      alert("Failed to clock in. Check console.");
+    }
+  };
+
+  const handleClockOut = async () => {
+    if (!activeJobId) return;
+    try {
+      await updateDoc(doc(db, 'job_logs', activeJobId), {
+        endTime: Timestamp.now(),
+        status: 'completed'
+      });
+    } catch (err) {
+      console.error("Error clocking out:", err);
+      alert("Failed to clock out. Check console.");
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0] || !activeJobId) return;
+    
+    setUploading(true);
+    const file = e.target.files[0];
+    const fileRef = ref(storage, `job-photos/${activeJobId}/${Date.now()}_${file.name}`);
+
+    try {
+      // Upload
+      const snapshot = await uploadBytes(fileRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
+
+      // Save URL to Firestore
+      await updateDoc(doc(db, 'job_logs', activeJobId), {
+        photos: arrayUnion(downloadURL)
+      });
+      
+    } catch (err) {
+      console.error("Error uploading photo:", err);
+      alert("Failed to upload photo. Check permissions.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-8 text-center text-zinc-500">Loading app...</div>;
+  }
+
+  // LOGIN SCREEN
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6 animate-in fade-in zoom-in duration-500">
+        <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-2xl w-full max-w-sm text-center">
+          <div className="mx-auto bg-zinc-800 h-16 w-16 rounded-full flex items-center justify-center mb-4">
+             <LogIn className="h-8 w-8 text-zinc-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Tech Login</h2>
+          <p className="text-zinc-500 text-sm mb-6">Enter your credentials to access job logs.</p>
+          
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input 
+              type="email" 
+              placeholder="Email" 
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <input 
+              type="password" 
+              placeholder="Password" 
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {authError && <p className="text-red-400 text-xs">{authError}</p>}
+            <button type="submit" className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg transition-all">
+              Sign In
+            </button>
+          </form>
+          <div className="mt-4 pt-4 border-t border-zinc-800">
+             <p className="text-xs text-zinc-600">Don't have an account? Ask Gianni.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // MAIN JOB LOGS UI
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      
+      {/* Header with Logout */}
+      <div className="flex items-center justify-between">
+         <h1 className="text-xl font-bold text-white">Job Logs</h1>
+         <button 
+           onClick={() => auth.signOut()}
+           className="text-xs text-zinc-500 hover:text-red-400 transition-colors"
+         >
+           Sign Out
+         </button>
+      </div>
+
+      {/* Status Card */}
+      <div className={cn(
+        "rounded-2xl border p-6 text-center transition-all duration-500 relative overflow-hidden",
+        activeJobId 
+          ? "bg-green-950/20 border-green-500/30 shadow-[0_0_40px_rgba(34,197,94,0.15)]" 
+          : "bg-zinc-900 border-zinc-800"
+      )}>
+        {/* Pulsing effect when active */}
+        {activeJobId && (
+            <div className="absolute inset-0 bg-green-500/5 animate-pulse pointer-events-none" />
+        )}
+
+        <div className="relative z-10">
+            <div className="mb-4 flex justify-center">
+            <div className={cn(
+                "flex h-20 w-20 items-center justify-center rounded-full border-4 transition-all duration-500",
+                activeJobId 
+                ? "border-green-500 bg-green-500/20 text-green-400" 
+                : "border-zinc-700 bg-zinc-800 text-zinc-500"
+            )}>
+                <Clock className={cn("h-10 w-10", activeJobId && "animate-pulse")} />
+            </div>
+            </div>
+            
+            <h2 className="text-2xl font-bold text-white mb-1">
+            {activeJobId ? 'Clocked In' : 'Off the Clock'}
+            </h2>
+            <p className={cn("font-mono text-lg mb-6 tracking-widest", activeJobId ? "text-green-400" : "text-zinc-600")}>
+            {elapsedTime}
+            </p>
+
+            <button
+            onClick={activeJobId ? handleClockOut : handleClockIn}
+            className={cn(
+                "w-full py-4 rounded-xl font-bold text-lg transition-all active:scale-95 shadow-lg",
+                activeJobId
+                ? "bg-red-500/10 text-red-400 border border-red-500/50 hover:bg-red-500/20 shadow-red-900/10"
+                : "bg-green-600 text-white hover:bg-green-500 shadow-green-900/20"
+            )}
+            >
+            {activeJobId ? 'Clock Out' : 'Clock In'}
+            </button>
+        </div>
+      </div>
+
+      {/* Photo Upload Section */}
+      <section className={cn("transition-opacity duration-300", !activeJobId && "opacity-50 pointer-events-none")}>
+        <h3 className="mb-3 text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
+          <span>Job Photos</span>
+          <span className="text-xs text-zinc-600 font-normal">{jobPhotos.length} uploaded</span>
+        </h3>
+        
+        {/* Photo Grid */}
+        {jobPhotos.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+             {jobPhotos.map((url, i) => (
+                <div key={i} className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group">
+                   <img src={url} alt="Job" className="w-full h-full object-cover" />
+                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <a href={url} target="_blank" rel="noreferrer" className="text-xs text-white underline">View</a>
+                   </div>
+                </div>
+             ))}
+          </div>
+        )}
+
+        <label className={cn(
+            "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
+            uploading ? "bg-zinc-900 border-zinc-800 cursor-wait" : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
+        )}>
+          {uploading ? (
+             <div className="flex flex-col items-center animate-pulse">
+                <Loader2 className="w-6 h-6 text-green-500 animate-spin mb-2" />
+                <p className="text-xs text-zinc-500">Uploading...</p>
+             </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <div className="mb-3 p-2 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
+                <Camera className="w-6 h-6 text-zinc-400 group-hover:text-zinc-200" />
+                </div>
+                <p className="mb-1 text-sm text-zinc-400 group-hover:text-zinc-200">
+                <span className="font-semibold">Tap to upload</span>
+                </p>
+                <p className="text-xs text-zinc-500">
+                Before/After photos
+                </p>
+            </div>
+          )}
+          <input 
+            type="file" 
+            className="hidden" 
+            accept="image/*" 
+            onChange={handlePhotoUpload}
+            disabled={uploading}
+          />
+        </label>
+      </section>
+
+      {/* Recent Activity (Placeholder) */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold text-zinc-400 uppercase tracking-wider">
+          Recent Activity
+        </h3>
+        <div className="space-y-3">
+            <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800 text-center">
+                <p className="text-zinc-500 text-sm">No recent logs found.</p>
+            </div>
+        </div>
+      </section>
+
+    </div>
+  );
+}

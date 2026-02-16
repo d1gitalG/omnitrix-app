@@ -1,0 +1,6 @@
+2026/02/15-22:26:30.934 5db8 Creating DB C:\Users\ladit\.openclaw\workspace\omnitrix-app\puppeteer-data\Default\IndexedDB\http_localhost_5173.indexeddb.leveldb since it was missing.
+2026/02/15-22:26:30.945 5db8 Reusing MANIFEST C:\Users\ladit\.openclaw\workspace\omnitrix-app\puppeteer-data\Default\IndexedDB\http_localhost_5173.indexeddb.leveldb/MANIFEST-000001
+2026/02/15-22:26:30.982 2478 Level-0 table #5: started
+2026/02/15-22:26:30.989 2478 Level-0 table #5: 1282 bytes OK
+2026/02/15-22:26:30.993 2478 Delete type=0 #3
+2026/02/15-22:26:30.994 2478 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
