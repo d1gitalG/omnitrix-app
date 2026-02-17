@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
-import { Camera, Clock, LogIn, Loader2 } from 'lucide-react';
+import { Camera, Clock, LogIn, Loader2, User } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { db, auth, storage } from '../lib/firebase';
 import { collection, addDoc, updateDoc, doc, Timestamp, query, where, orderBy, limit, onSnapshot, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { signInWithEmailAndPassword, onAuthStateChanged, type User } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
+import RecentLogItem from '../components/RecentLogItem';
+import toast, { Toaster } from 'react-hot-toast';
 
 export default function JobLogs() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   
   // Auth State
@@ -16,11 +19,14 @@ export default function JobLogs() {
   const [authError, setAuthError] = useState('');
 
   // Job State
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [jobType, setJobType] = useState('Service Call');
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
   const [jobPhotos, setJobPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [recentJobs, setRecentJobs] = useState<any[]>([]);
 
   // 1. Listen for Auth State
   useEffect(() => {
@@ -61,8 +67,28 @@ export default function JobLogs() {
 
     return () => unsubscribe();
   }, [user]);
+  
+    // 3. Listen for Recent Jobs
+  useEffect(() => {
+    if (!user) return;
 
-  // 3. Timer Logic
+    const q = query(
+      collection(db, 'job_logs'),
+      where('userId', '==', user.uid),
+      where('status', '==', 'completed'),
+      orderBy('endTime', 'desc'),
+      limit(5)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRecentJobs(jobs);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // 4. Timer Logic
   useEffect(() => {
     let interval: any;
     if (activeJobId && startTime) {
@@ -84,40 +110,55 @@ export default function JobLogs() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
+    setAuthError('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      setAuthError('');
+      toast.success('Signed in!');
     } catch (err: any) {
       setAuthError('Invalid email or password');
+      toast.error('Sign in failed.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleClockIn = async () => {
-    if (!user) return;
+    if (!user || isSubmitting) return;
+    setIsSubmitting(true);
+    const toastId = toast.loading('Clocking in...');
     try {
       await addDoc(collection(db, 'job_logs'), {
         userId: user.uid,
         startTime: Timestamp.now(),
         status: 'in_progress',
-        jobType: 'General', 
+        jobType: jobType,
         photos: []
       });
+      toast.success('Successfully Clocked In!', { id: toastId });
     } catch (err) {
       console.error("Error clocking in:", err);
-      alert("Failed to clock in. Check console.");
+      toast.error("Failed to clock in. Please try again.", { id: toastId });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleClockOut = async () => {
-    if (!activeJobId) return;
+    if (!activeJobId || isSubmitting) return;
+    setIsSubmitting(true);
+    const toastId = toast.loading('Clocking out...');
     try {
       await updateDoc(doc(db, 'job_logs', activeJobId), {
         endTime: Timestamp.now(),
         status: 'completed'
       });
+      toast.success('Successfully Clocked Out!', { id: toastId });
     } catch (err) {
       console.error("Error clocking out:", err);
-      alert("Failed to clock out. Check console.");
+      toast.error("Failed to clock out. Please try again.", { id: toastId });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -137,10 +178,11 @@ export default function JobLogs() {
       await updateDoc(doc(db, 'job_logs', activeJobId), {
         photos: arrayUnion(downloadURL)
       });
+      toast.success('Photo uploaded successfully!');
       
     } catch (err) {
       console.error("Error uploading photo:", err);
-      alert("Failed to upload photo. Check permissions.");
+      toast.error("Failed to upload photo. Check permissions.");
     } finally {
       setUploading(false);
     }
@@ -177,8 +219,12 @@ export default function JobLogs() {
               onChange={(e) => setPassword(e.target.value)}
             />
             {authError && <p className="text-red-400 text-xs">{authError}</p>}
-            <button type="submit" className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg transition-all">
-              Sign In
+            <button 
+              type="submit" 
+              className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg transition-all flex items-center justify-center disabled:opacity-50"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Sign In'}
             </button>
           </form>
           <div className="mt-4 pt-4 border-t border-zinc-800">
@@ -192,16 +238,18 @@ export default function JobLogs() {
   // MAIN JOB LOGS UI
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <Toaster />
       
-      {/* Header with Logout */}
+      {/* Header with Profile Link */}
       <div className="flex items-center justify-between">
          <h1 className="text-xl font-bold text-white">Job Logs</h1>
-         <button 
-           onClick={() => auth.signOut()}
-           className="text-xs text-zinc-500 hover:text-red-400 transition-colors"
+         <Link 
+           to="/profile"
+           className="flex items-center gap-2 text-xs text-zinc-500 hover:text-green-400 transition-colors"
          >
-           Sign Out
-         </button>
+           <User className="h-4 w-4" />
+           <span>Profile</span>
+         </Link>
       </div>
 
       {/* Status Card */}
@@ -237,15 +285,34 @@ export default function JobLogs() {
 
             <button
             onClick={activeJobId ? handleClockOut : handleClockIn}
+            disabled={isSubmitting}
             className={cn(
-                "w-full py-4 rounded-xl font-bold text-lg transition-all active:scale-95 shadow-lg",
+                "w-full py-4 rounded-xl font-bold text-lg transition-all active:scale-95 shadow-lg flex items-center justify-center disabled:opacity-60",
                 activeJobId
                 ? "bg-red-500/10 text-red-400 border border-red-500/50 hover:bg-red-500/20 shadow-red-900/10"
                 : "bg-green-600 text-white hover:bg-green-500 shadow-green-900/20"
             )}
             >
-            {activeJobId ? 'Clock Out' : 'Clock In'}
+            {isSubmitting ? <Loader2 className="h-6 w-6 animate-spin" /> : (activeJobId ? 'Clock Out' : 'Clock In')}
             </button>
+            
+            {/* Job Type Selector */}
+            {!activeJobId && (
+              <div className="mt-4 pt-4 border-t border-zinc-700/50 animate-in fade-in duration-500">
+                <label htmlFor="jobType" className="block text-xs text-zinc-400 mb-1">Job Type</label>
+                <select 
+                  id="jobType"
+                  value={jobType}
+                  onChange={(e) => setJobType(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm focus:border-green-500 focus:outline-none"
+                >
+                  <option>Service Call</option>
+                  <option>Installation</option>
+                  <option>Preventative Maintenance</option>
+                  <option>Consultation</option>
+                </select>
+              </div>
+            )}
         </div>
       </div>
 
@@ -302,15 +369,19 @@ export default function JobLogs() {
         </label>
       </section>
 
-      {/* Recent Activity (Placeholder) */}
+      {/* Recent Activity */}
       <section>
         <h3 className="mb-3 text-sm font-semibold text-zinc-400 uppercase tracking-wider">
           Recent Activity
         </h3>
         <div className="space-y-3">
+          {recentJobs.length > 0 ? (
+            recentJobs.map(job => <RecentLogItem key={job.id} job={job} />)
+          ) : (
             <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800 text-center">
-                <p className="text-zinc-500 text-sm">No recent logs found.</p>
+              <p className="text-zinc-500 text-sm">No recent logs found.</p>
             </div>
+          )}
         </div>
       </section>
 
