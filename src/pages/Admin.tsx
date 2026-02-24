@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { auth, db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Shield, Clock, CheckCircle, Image as ImageIcon } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -27,28 +27,35 @@ const Admin: React.FC = () => {
   useEffect(() => {
     if (!isAdmin) return;
 
-    // Listen to in_progress jobs
+    // Listen to in_progress jobs (no orderBy to avoid composite index requirement)
     const qActive = query(
       collection(db, 'job_logs'),
-      where('status', '==', 'in_progress'),
-      orderBy('startTime', 'desc')
+      where('status', '==', 'in_progress')
     );
 
     const unsubscribeActive = onSnapshot(qActive, (snapshot) => {
       const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobLog));
+      // Sort client-side
+      jobs.sort((a, b) => (b.startTime?.seconds || 0) - (a.startTime?.seconds || 0));
       setActiveJobs(jobs);
+    }, (error) => {
+      console.error("Admin active jobs error:", error);
     });
 
-    // Listen to completed jobs
+    // Listen to completed jobs (no orderBy to avoid composite index requirement)
     const qCompleted = query(
       collection(db, 'job_logs'),
-      where('status', '==', 'completed'),
-      orderBy('endTime', 'desc')
+      where('status', '==', 'completed')
     );
 
     const unsubscribeCompleted = onSnapshot(qCompleted, (snapshot) => {
       const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobLog));
+      // Sort client-side
+      jobs.sort((a, b) => (b.endTime?.seconds || 0) - (a.endTime?.seconds || 0));
       setCompletedJobs(jobs);
+      setLoading(false);
+    }, (error) => {
+      console.error("Admin completed jobs error:", error);
       setLoading(false);
     });
 
