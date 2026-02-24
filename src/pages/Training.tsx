@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { CheckCircle2, ChevronRight, FileText, Youtube } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db, auth } from '../lib/firebase';
-import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const level1Checklist = [
@@ -58,15 +58,13 @@ export default function Training() {
   useEffect(() => {
     if (!user) return;
 
-    // Fetch Level
-    const fetchLevel = async () => {
-      const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
+    // Fetch Level via listener (works with offline persistence)
+    const userRef = doc(db, 'users', user.uid);
+    const unsubLevel = onSnapshot(userRef, (userSnap) => {
       if (userSnap.exists() && userSnap.data().techLevel) {
         setTechLevel(userSnap.data().techLevel);
       }
-    };
-    fetchLevel();
+    });
 
     // Sync Progress
     const docRef = doc(db, 'training_progress', user.uid);
@@ -76,7 +74,7 @@ export default function Training() {
       }
     });
 
-    return () => unsubscribe();
+    return () => { unsubLevel(); unsubscribe(); };
   }, [user]);
 
   const handleToggle = async (id: string) => {

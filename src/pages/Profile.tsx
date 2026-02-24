@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 
 export default function Profile() {
@@ -15,29 +15,35 @@ export default function Profile() {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      if (currentUser) {
-        // Fetch profile data from Firestore
-        try {
-          const docRef = doc(db, 'users', currentUser.uid);
-          const docSnap = await getDoc(docRef);
-          
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            setName(data.name || '');
-            setPhone(data.phone || '');
-            setTechLevel(data.techLevel || 1);
-          }
-        } catch (error) {
-          console.error("Error fetching profile:", error);
-        }
+      if (!currentUser) {
+        setLoading(false);
       }
+    });
+
+    return () => unsubAuth();
+  }, []);
+
+  // Listen for profile data changes
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubProfile = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setName(data.name || '');
+        setPhone(data.phone || '');
+        setTechLevel(data.techLevel || 1);
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching profile:", error);
       setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => unsubProfile();
+  }, [user]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
