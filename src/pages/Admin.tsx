@@ -20,7 +20,7 @@ interface JobLog {
 const Admin: React.FC = () => {
   const [activeJobs, setActiveJobs] = useState<JobLog[]>([]);
   const [completedJobs, setCompletedJobs] = useState<JobLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [_loading, setLoading] = useState(true);
 
   const isAdmin = auth.currentUser?.email === 'gianni@omnitrix.tech';
 

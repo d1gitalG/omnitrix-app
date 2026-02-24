@@ -1,14 +1,11 @@
-import { LogOut } from 'lucide-react';
-import { Link } from 'react-router-dom';
-
 // A simple utility to format Firestore Timestamps
-const formatDate = (timestamp) => {
+const formatDate = (timestamp: any) => {
   if (!timestamp) return 'N/A';
   return new Date(timestamp.seconds * 1000).toLocaleString();
 };
 
 // A simple utility to calculate duration between two Timestamps
-const formatDuration = (start, end) => {
+const formatDuration = (start: any, end: any) => {
   if (!start || !end) return 'N/A';
   const diff = end.seconds - start.seconds;
   const h = Math.floor(diff / 3600);
@@ -17,7 +14,7 @@ const formatDuration = (start, end) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function RecentLogItem({ job }) {
+export default function RecentLogItem({ job }: { job: any }) {
   return (
     <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-between">
       <div>
