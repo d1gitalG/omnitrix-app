@@ -1,9 +1,12 @@
-import { Network, Search, Zap, User } from 'lucide-react';
+import { Network, Search, Zap, User, Shield } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { auth } from '../lib/firebase';
 
 export function Layout() {
   const location = useLocation();
+  const user = auth.currentUser;
+  const isAdmin = user?.email === 'gianni@omnitrix.tech';
 
   const navItems = [
     { icon: Network, label: 'Jobs', path: '/jobs' },
@@ -11,6 +14,10 @@ export function Layout() {
     { icon: Zap, label: 'Training', path: '/training' },
     { icon: User, label: 'Profile', path: '/profile' },
   ];
+
+  if (isAdmin) {
+    navItems.push({ icon: Shield, label: 'Admin', path: '/admin' });
+  }
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-white font-sans antialiased">

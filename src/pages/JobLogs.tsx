@@ -4,10 +4,11 @@ import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { db, auth, storage } from '../lib/firebase';
 import { collection, addDoc, updateDoc, doc, Timestamp, query, where, orderBy, limit, onSnapshot, arrayUnion } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { signInWithEmailAndPassword, onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import RecentLogItem from '../components/RecentLogItem';
 import toast, { Toaster } from 'react-hot-toast';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 export default function JobLogs() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -26,6 +27,7 @@ export default function JobLogs() {
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
   const [jobPhotos, setJobPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
 
   // 1. Listen for Auth State
@@ -153,6 +155,12 @@ export default function JobLogs() {
         endTime: Timestamp.now(),
         status: 'completed'
       });
+      // Force local state clear immediately so UI updates
+      setActiveJobId(null);
+      setStartTime(null);
+      setElapsedTime('00:00:00');
+      setJobPhotos([]);
+      
       toast.success('Successfully Clocked Out!', { id: toastId });
     } catch (err) {
       console.error("Error clocking out:", err);
@@ -163,28 +171,76 @@ export default function JobLogs() {
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || !e.target.files[0] || !activeJobId) return;
+    if (!e.target.files || e.target.files.length === 0 || !activeJobId) return;
     
+    const files = Array.from(e.target.files);
+
+    // T4: File Validation (check all files)
+    const validFiles = files.filter(file => {
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`${file.name} is too large. Max 10MB.`);
+        return false;
+      }
+      if (!file.type.startsWith('image/')) {
+        toast.error(`${file.name} is an invalid file type. Images only.`);
+        return false;
+      }
+      return true;
+    });
+
+    if (validFiles.length === 0) return;
+
     setUploading(true);
-    const file = e.target.files[0];
-    const fileRef = ref(storage, `job-photos/${activeJobId}/${Date.now()}_${file.name}`);
+    setUploadProgress(0);
+
+    let completedUploads = 0;
+    const totalFiles = validFiles.length;
 
     try {
-      // Upload
-      const snapshot = await uploadBytes(fileRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
+      for (const file of validFiles) {
+        const fileRef = ref(storage, `job-photos/${activeJobId}/${Date.now()}_${file.name}`);
+        
+        // T5: Resumable Upload (Sequential for UI simplicity)
+        const uploadTask = uploadBytesResumable(fileRef, file);
 
-      // Save URL to Firestore
-      await updateDoc(doc(db, 'job_logs', activeJobId), {
-        photos: arrayUnion(downloadURL)
-      });
-      toast.success('Photo uploaded successfully!');
-      
+        await new Promise<void>((resolve, reject) => {
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              // T6: Progress Calculation (weighted across all files)
+              const fileProgress = (snapshot.bytesTransferred / snapshot.totalBytes);
+              const totalProgress = ((completedUploads + fileProgress) / totalFiles) * 100;
+              setUploadProgress(totalProgress);
+            }, 
+            (error) => {
+              console.error(`Error uploading ${file.name}:`, error);
+              toast.error(`Upload failed for ${file.name}.`);
+              reject(error);
+            }, 
+            async () => {
+              try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                await updateDoc(doc(db, 'job_logs', activeJobId), {
+                  photos: arrayUnion(downloadURL)
+                });
+                completedUploads++;
+                // Immediately update local state so they appear in grid!
+                setJobPhotos(prev => [...prev, downloadURL]);
+                resolve();
+              } catch (err) {
+                console.error("Error saving URL:", err);
+                toast.error(`Failed to save link for ${file.name}.`);
+                reject(err);
+              }
+            }
+          );
+        });
+      }
+      toast.success(totalFiles > 1 ? `Successfully uploaded ${totalFiles} photos!` : 'Photo uploaded successfully!');
     } catch (err) {
-      console.error("Error uploading photo:", err);
-      toast.error("Failed to upload photo. Check permissions.");
+      console.error("Upload process encountered errors.");
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -317,57 +373,66 @@ export default function JobLogs() {
       </div>
 
       {/* Photo Upload Section */}
-      <section className={cn("transition-opacity duration-300", !activeJobId && "opacity-50 pointer-events-none")}>
-        <h3 className="mb-3 text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-          <span>Job Photos</span>
-          <span className="text-xs text-zinc-600 font-normal">{jobPhotos.length} uploaded</span>
-        </h3>
-        
-        {/* Photo Grid */}
-        {jobPhotos.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 mb-4">
-             {jobPhotos.map((url, i) => (
-                <div key={i} className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group">
-                   <img src={url} alt="Job" className="w-full h-full object-cover" />
-                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <a href={url} target="_blank" rel="noreferrer" className="text-xs text-white underline">View</a>
-                   </div>
-                </div>
-             ))}
-          </div>
-        )}
-
-        <label className={cn(
-            "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
-            uploading ? "bg-zinc-900 border-zinc-800 cursor-wait" : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
-        )}>
-          {uploading ? (
-             <div className="flex flex-col items-center animate-pulse">
-                <Loader2 className="w-6 h-6 text-green-500 animate-spin mb-2" />
-                <p className="text-xs text-zinc-500">Uploading...</p>
-             </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <div className="mb-3 p-2 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
-                <Camera className="w-6 h-6 text-zinc-400 group-hover:text-zinc-200" />
-                </div>
-                <p className="mb-1 text-sm text-zinc-400 group-hover:text-zinc-200">
-                <span className="font-semibold">Tap to upload</span>
-                </p>
-                <p className="text-xs text-zinc-500">
-                Before/After photos
-                </p>
+      <ErrorBoundary onReset={() => setUploading(false)}>
+        <section className={cn("transition-opacity duration-300", !activeJobId && "opacity-50 pointer-events-none")}>
+          <h3 className="mb-3 text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
+            <span>Job Photos</span>
+            <span className="text-xs text-zinc-600 font-normal">{jobPhotos.length} uploaded</span>
+          </h3>
+          
+          {/* Photo Grid */}
+          {jobPhotos.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 mb-4">
+               {jobPhotos.map((url, i) => (
+                  <div key={i} className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group">
+                     <img src={url} alt="Job" className="w-full h-full object-cover" />
+                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <a href={url} target="_blank" rel="noreferrer" className="text-xs text-white underline">View</a>
+                     </div>
+                  </div>
+               ))}
             </div>
           )}
-          <input 
-            type="file" 
-            className="hidden" 
-            accept="image/*" 
-            onChange={handlePhotoUpload}
-            disabled={uploading}
-          />
-        </label>
-      </section>
+
+          <label className={cn(
+              "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
+              uploading ? "bg-zinc-900 border-zinc-800 cursor-wait" : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
+          )}>
+            {uploading ? (
+               <div className="flex flex-col items-center w-full px-8">
+                  <Loader2 className="w-6 h-6 text-green-500 animate-spin mb-2" />
+                  <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden mb-2">
+                     <div 
+                       className="bg-green-500 h-full transition-all duration-300" 
+                       style={{ width: `${uploadProgress}%` }}
+                     />
+                  </div>
+                  <p className="text-xs text-zinc-500">{Math.round(uploadProgress)}% Uploading...</p>
+               </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                  <div className="mb-3 p-2 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
+                  <Camera className="w-6 h-6 text-zinc-400 group-hover:text-zinc-200" />
+                  </div>
+                  <p className="mb-1 text-sm text-zinc-400 group-hover:text-zinc-200">
+                  <span className="font-semibold">Tap to upload</span>
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                  Before/After photos
+                  </p>
+              </div>
+            )}
+            <input 
+              type="file" 
+              className="hidden" 
+              accept="image/*" 
+              onChange={handlePhotoUpload}
+              disabled={uploading}
+              multiple
+            />
+          </label>
+        </section>
+      </ErrorBoundary>
 
       {/* Recent Activity */}
       <section>
