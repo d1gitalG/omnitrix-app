@@ -16,7 +16,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore with standard settings (Offline persistence removed due to severe latency issues)
-import { getFirestore } from 'firebase/firestore';
 const db = getFirestore(app);
 
 const auth = getAuth(app);
