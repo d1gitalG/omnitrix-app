@@ -128,7 +128,6 @@ export default function JobLogs() {
   const handleClockIn = async () => {
     if (!user || isSubmitting) return;
     setIsSubmitting(true);
-    const toastId = toast.loading('Clocking in...');
     try {
       await addDoc(collection(db, 'job_logs'), {
         userId: user.uid,
@@ -137,10 +136,10 @@ export default function JobLogs() {
         jobType: jobType,
         photos: []
       });
-      toast.success('Successfully Clocked In!', { id: toastId });
+      toast.success('Successfully Clocked In!');
     } catch (err) {
       console.error("Error clocking in:", err);
-      toast.error("Failed to clock in. Please try again.", { id: toastId });
+      toast.error("Failed to clock in. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -149,7 +148,6 @@ export default function JobLogs() {
   const handleClockOut = async () => {
     if (!activeJobId || isSubmitting) return;
     setIsSubmitting(true);
-    const toastId = toast.loading('Clocking out...');
     try {
       await updateDoc(doc(db, 'job_logs', activeJobId), {
         endTime: Timestamp.now(),
@@ -161,10 +159,10 @@ export default function JobLogs() {
       setElapsedTime('00:00:00');
       setJobPhotos([]);
       
-      toast.success('Successfully Clocked Out!', { id: toastId });
+      toast.success('Successfully Clocked Out!');
     } catch (err) {
       console.error("Error clocking out:", err);
-      toast.error("Failed to clock out. Please try again.", { id: toastId });
+      toast.error("Failed to clock out. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
