@@ -54,6 +54,8 @@ export default function JobLogs() {
   const [contactPhone, setContactPhone] = useState('');
   const [notes, setNotes] = useState('');
   const [isSavingNotes, setIsSavingNotes] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // 1. Listen for Auth State
   useEffect(() => {
@@ -287,9 +289,10 @@ export default function JobLogs() {
     });
   };
 
-  const handleSaveNotes = async () => {
+  const handleSaveNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!activeJobId || isSavingNotes) return;
     setIsSavingNotes(true);
+    setSaveError(null);
     try {
       await updateDoc(doc(db, 'job_logs', activeJobId), {
         notes: notes,
@@ -298,10 +301,12 @@ export default function JobLogs() {
         contactName,
         contactPhone
       });
-      toast.success('Job details saved');
+      setLastSavedAt(Date.now());
+      if (!silent) toast.success('Job details saved');
     } catch (err) {
       console.error('Error saving job details:', err);
-      toast.error('Failed to save details');
+      setSaveError('Failed to save');
+      if (!silent) toast.error('Failed to save details');
     } finally {
       setIsSavingNotes(false);
     }
@@ -385,6 +390,20 @@ export default function JobLogs() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-save job details (debounced)
+  useEffect(() => {
+    if (!activeJobId) return;
+
+    const t = setTimeout(() => {
+      // Don't spam saves while a manual save is in-flight.
+      if (isSavingNotes) return;
+      void handleSaveNotes({ silent: true });
+    }, 1000);
+
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJobId, siteName, address, contactName, contactPhone, notes]);
 
   const uploadPendingPhotos = async (kind: 'before' | 'after') => {
     if (!activeJobId) return;
@@ -651,13 +670,24 @@ export default function JobLogs() {
           />
         </div>
 
-        <button
-          onClick={handleSaveNotes}
-          disabled={!activeJobId || isSavingNotes}
-          className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
-        >
-          {isSavingNotes ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save Details'}
-        </button>
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-zinc-600">
+            {saveError
+              ? saveError
+              : isSavingNotes
+                ? 'Saving…'
+                : lastSavedAt
+                  ? `Saved ${new Date(lastSavedAt).toLocaleTimeString()}`
+                  : 'Auto-saves while you type'}
+          </p>
+          <button
+            onClick={() => handleSaveNotes()}
+            disabled={!activeJobId || isSavingNotes}
+            className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            {isSavingNotes ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+          </button>
+        </div>
       </section>
 
       {/* Photo Upload Section */}
