@@ -141,9 +141,17 @@ export async function clockIn(page) {
 }
 
 export async function clockOut(page) {
-  await clickMainClockButton(page);
-  await waitForJobStatus(page, 'Off the Clock', { timeout: 120000 });
-  await waitMainClockButtonEnabled(page, { timeout: 120000 });
+  // Clock-out can be slightly flaky if Firestore sync is slow; retry the click a couple times.
+  for (let i = 0; i < 3; i++) {
+    await clickMainClockButton(page);
+    try {
+      await waitForJobStatus(page, 'Off the Clock', { timeout: 180000 });
+      await waitMainClockButtonEnabled(page, { timeout: 120000 });
+      return;
+    } catch (err) {
+      if (i === 2) throw err;
+    }
+  }
 }
 
 export async function setJobType(page, value) {

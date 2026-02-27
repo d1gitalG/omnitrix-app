@@ -109,6 +109,15 @@ export default function JobLogs() {
         setStartTime(null);
         setElapsedTime('00:00:00');
         setJobPhotos([]);
+
+        // Clear job detail fields when no active job.
+        // Otherwise the next Clock In can inherit old details and accidentally save them to the new job.
+        setSiteName('');
+        setAddress('');
+        setContactName('');
+        setContactPhone('');
+        setNotes('');
+
         setPendingBefore((prev) => {
           prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
           return [];
