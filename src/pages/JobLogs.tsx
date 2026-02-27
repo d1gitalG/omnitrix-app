@@ -384,7 +384,9 @@ export default function JobLogs() {
                 });
 
                 completedUploads++;
-                setJobPhotos((prev) => [...prev, photo]);
+                // Don't optimistically push into `jobPhotos` here.
+                // The active-job `onSnapshot` listener will reflect the new photo from Firestore.
+                // Optimistic + snapshot can cause UI duplicates (1 upload shows as 2).
                 resolve();
               } catch (err) {
                 console.error('Error saving URL:', err);
