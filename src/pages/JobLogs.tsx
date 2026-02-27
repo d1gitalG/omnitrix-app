@@ -29,6 +29,7 @@ export default function JobLogs() {
   const [jobPhotos, setJobPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
 
   // 1. Listen for Auth State
@@ -221,13 +222,9 @@ export default function JobLogs() {
     });
   };
 
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0 || !activeJobId) return;
-    
-    const files = Array.from(e.target.files);
-
-    // T4: File Validation (check all files)
-    const validFiles = files.filter(file => {
+  const validatePhotoFiles = (files: File[]) => {
+    // File Validation (check all files)
+    return files.filter((file) => {
       if (file.size > 10 * 1024 * 1024) {
         toast.error(`${file.name} is too large. Max 10MB.`);
         return false;
@@ -238,35 +235,56 @@ export default function JobLogs() {
       }
       return true;
     });
+  };
 
-    if (validFiles.length === 0) return;
+  const handlePhotoPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !activeJobId) return;
+
+    const files = Array.from(e.target.files);
+    const valid = validatePhotoFiles(files);
+    if (valid.length === 0) return;
+
+    setPendingPhotos((prev) => [...prev, ...valid]);
+
+    // Allow selecting the same file again later
+    e.target.value = '';
+  };
+
+  const removePendingPhoto = (idx: number) => {
+    setPendingPhotos((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const uploadPendingPhotos = async () => {
+    if (!activeJobId) return;
+    if (pendingPhotos.length === 0) return;
 
     setUploading(true);
     setUploadProgress(0);
 
     let completedUploads = 0;
-    const totalFiles = validFiles.length;
+    const totalFiles = pendingPhotos.length;
 
     try {
-      for (const file of validFiles) {
+      for (const file of pendingPhotos) {
         const fileRef = ref(storage, `job-photos/${activeJobId}/${Date.now()}_${file.name}`);
-        
-        // T5: Resumable Upload (Sequential for UI simplicity)
+
+        // Resumable Upload (Sequential for UI simplicity)
         const uploadTask = uploadBytesResumable(fileRef, file);
 
         await new Promise<void>((resolve, reject) => {
-          uploadTask.on('state_changed', 
+          uploadTask.on(
+            'state_changed',
             (snapshot) => {
-              // T6: Progress Calculation (weighted across all files)
-              const fileProgress = (snapshot.bytesTransferred / snapshot.totalBytes);
+              // Progress Calculation (weighted across all files)
+              const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
               const totalProgress = ((completedUploads + fileProgress) / totalFiles) * 100;
               setUploadProgress(totalProgress);
-            }, 
+            },
             (error) => {
               console.error(`Error uploading ${file.name}:`, error);
               toast.error(`Upload failed for ${file.name}.`);
               reject(error);
-            }, 
+            },
             async () => {
               try {
                 const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
@@ -275,10 +293,10 @@ export default function JobLogs() {
                 });
                 completedUploads++;
                 // Immediately update local state so they appear in grid!
-                setJobPhotos(prev => [...prev, downloadURL]);
+                setJobPhotos((prev) => [...prev, downloadURL]);
                 resolve();
               } catch (err) {
-                console.error("Error saving URL:", err);
+                console.error('Error saving URL:', err);
                 toast.error(`Failed to save link for ${file.name}.`);
                 reject(err);
               }
@@ -286,9 +304,13 @@ export default function JobLogs() {
           );
         });
       }
-      toast.success(totalFiles > 1 ? `Successfully uploaded ${totalFiles} photos!` : 'Photo uploaded successfully!');
+
+      toast.success(
+        totalFiles > 1 ? `Successfully uploaded ${totalFiles} photos!` : 'Photo uploaded successfully!'
+      );
+      setPendingPhotos([]);
     } catch (err) {
-      console.error("Upload process encountered errors.");
+      console.error('Upload process encountered errors.');
     } finally {
       setUploading(false);
       setUploadProgress(0);
@@ -311,15 +333,23 @@ export default function JobLogs() {
           <p className="text-zinc-500 text-sm mb-6">Enter your credentials to access job logs.</p>
           
           <form onSubmit={handleLogin} className="space-y-4">
+            <label htmlFor="loginEmail" className="sr-only">Email</label>
             <input 
+              id="loginEmail"
+              name="email"
               type="email" 
+              autoComplete="email"
               placeholder="Email" 
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
+            <label htmlFor="loginPassword" className="sr-only">Password</label>
             <input 
+              id="loginPassword"
+              name="password"
               type="password" 
+              autoComplete="current-password"
               placeholder="Password" 
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
               value={password}
@@ -445,6 +475,48 @@ export default function JobLogs() {
             </div>
           )}
 
+          {/* Pending picks list */}
+          {pendingPhotos.length > 0 && !uploading && (
+            <div className="mb-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Pending Uploads</p>
+                <button
+                  type="button"
+                  className="text-xs text-zinc-500 hover:text-zinc-300"
+                  onClick={() => setPendingPhotos([])}
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {pendingPhotos.map((f, idx) => (
+                  <div key={`${f.name}-${idx}`} className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm text-zinc-200 truncate">{f.name}</p>
+                      <p className="text-xs text-zinc-500">{Math.round(f.size / 1024)} KB</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-xs px-2 py-1 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                      onClick={() => removePendingPhoto(idx)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="mt-3 w-full py-3 rounded-xl font-bold text-sm bg-emerald-500 text-black hover:bg-emerald-400"
+                onClick={uploadPendingPhotos}
+              >
+                Upload {pendingPhotos.length} Photo{pendingPhotos.length === 1 ? '' : 's'}
+              </button>
+            </div>
+          )}
+
           <label className={cn(
               "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
               uploading ? "bg-zinc-900 border-zinc-800 cursor-wait" : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
@@ -466,7 +538,7 @@ export default function JobLogs() {
                   <Camera className="w-6 h-6 text-zinc-400 group-hover:text-zinc-200" />
                   </div>
                   <p className="mb-1 text-sm text-zinc-400 group-hover:text-zinc-200">
-                  <span className="font-semibold">Tap to upload</span>
+                  <span className="font-semibold">Tap to select photos</span>
                   </p>
                   <p className="text-xs text-zinc-500">
                   Before/After photos
@@ -474,10 +546,12 @@ export default function JobLogs() {
               </div>
             )}
             <input 
+              id="jobPhotos"
+              name="jobPhotos"
               type="file" 
               className="hidden" 
               accept="image/*" 
-              onChange={handlePhotoUpload}
+              onChange={handlePhotoPick}
               disabled={uploading}
               multiple
             />

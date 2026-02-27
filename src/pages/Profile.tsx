@@ -110,11 +110,14 @@ export default function Profile() {
       <form onSubmit={handleSave} className="space-y-4">
         <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
+            <label htmlFor="profileEmail" className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
               Email
             </label>
             <input
+              id="profileEmail"
+              name="email"
               type="text"
+              autoComplete="email"
               disabled
               value={user.email || ''}
               className="w-full bg-zinc-950 border border-zinc-800 text-zinc-500 rounded-xl px-4 py-3 cursor-not-allowed"
@@ -122,11 +125,14 @@ export default function Profile() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
+            <label htmlFor="profileFullName" className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
               Full Name
             </label>
             <input
+              id="profileFullName"
+              name="name"
               type="text"
+              autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Enter your name"
@@ -135,11 +141,14 @@ export default function Profile() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
+            <label htmlFor="profilePhone" className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
               Phone Number
             </label>
             <input
+              id="profilePhone"
+              name="tel"
               type="tel"
+              autoComplete="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+1 (555) 000-0000"
@@ -148,10 +157,12 @@ export default function Profile() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
+            <label htmlFor="profileTechLevel" className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1 ml-1">
               Tech Level
             </label>
             <select
+              id="profileTechLevel"
+              name="techLevel"
               value={techLevel}
               onChange={(e) => setTechLevel(parseInt(e.target.value))}
               className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all outline-none appearance-none"

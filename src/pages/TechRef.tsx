@@ -140,8 +140,12 @@ export default function TechRef() {
       {/* Search Bar */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+        <label htmlFor="techRefSearch" className="sr-only">Search</label>
         <input 
+          id="techRefSearch"
+          name="search"
           type="text" 
+          autoComplete="off"
           placeholder="Search pinouts, passwords..." 
           className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-3 pl-10 pr-4 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500 transition-all"
           value={searchTerm}
