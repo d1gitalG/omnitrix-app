@@ -10,6 +10,20 @@ import RecentLogItem from '../components/RecentLogItem';
 import toast, { Toaster } from 'react-hot-toast';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
+type PhotoKind = 'before' | 'after' | 'unsorted';
+
+type JobPhoto = {
+  url: string;
+  kind: PhotoKind;
+  uploadedAt?: string;
+};
+
+type PendingPhoto = {
+  file: File;
+  previewUrl: string;
+  kind: Exclude<PhotoKind, 'unsorted'>;
+};
+
 export default function JobLogs() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,10 +40,11 @@ export default function JobLogs() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
-  const [jobPhotos, setJobPhotos] = useState<string[]>([]);
+  const [jobPhotos, setJobPhotos] = useState<JobPhoto[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [pendingBefore, setPendingBefore] = useState<PendingPhoto[]>([]);
+  const [pendingAfter, setPendingAfter] = useState<PendingPhoto[]>([]);
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
 
   // 1. Listen for Auth State
@@ -60,12 +75,33 @@ export default function JobLogs() {
         const data = jobDoc.data();
         setActiveJobId(jobDoc.id);
         setStartTime(data.startTime.toDate());
-        setJobPhotos(data.photos || []);
+
+        const rawPhotos = Array.isArray(data.photos) ? data.photos : [];
+        const normalized: JobPhoto[] = rawPhotos
+          .map((p: any) => {
+            if (typeof p === 'string') return { url: p, kind: 'unsorted' as const };
+            if (p && typeof p === 'object' && typeof p.url === 'string') {
+              const kind: PhotoKind = p.kind === 'before' || p.kind === 'after' ? p.kind : 'unsorted';
+              return { url: p.url, kind, uploadedAt: typeof p.uploadedAt === 'string' ? p.uploadedAt : undefined };
+            }
+            return null;
+          })
+          .filter(Boolean) as JobPhoto[];
+
+        setJobPhotos(normalized);
       } else {
         setActiveJobId(null);
         setStartTime(null);
         setElapsedTime('00:00:00');
         setJobPhotos([]);
+        setPendingBefore((prev) => {
+          prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+          return [];
+        });
+        setPendingAfter((prev) => {
+          prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+          return [];
+        });
       }
     });
 
@@ -237,45 +273,93 @@ export default function JobLogs() {
     });
   };
 
-  const handlePhotoPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0 || !activeJobId) return;
-
-    const files = Array.from(e.target.files);
+  const addPending = (kind: 'before' | 'after', files: File[]) => {
     const valid = validatePhotoFiles(files);
     if (valid.length === 0) return;
 
-    setPendingPhotos((prev) => [...prev, ...valid]);
+    const pending: PendingPhoto[] = valid.map((file) => ({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      kind
+    }));
+
+    if (kind === 'before') setPendingBefore((prev) => [...prev, ...pending]);
+    else setPendingAfter((prev) => [...prev, ...pending]);
+  };
+
+  const handlePhotoPick = (kind: 'before' | 'after') => (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !activeJobId) return;
+
+    addPending(kind, Array.from(e.target.files));
 
     // Allow selecting the same file again later
     e.target.value = '';
   };
 
-  const removePendingPhoto = (idx: number) => {
-    setPendingPhotos((prev) => prev.filter((_, i) => i !== idx));
+  const clearPending = (kind: 'before' | 'after') => {
+    if (kind === 'before') {
+      setPendingBefore((prev) => {
+        prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+        return [];
+      });
+      return;
+    }
+
+    setPendingAfter((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      return [];
+    });
   };
 
-  const uploadPendingPhotos = async () => {
+  const removePendingPhoto = (kind: 'before' | 'after', idx: number) => {
+    if (kind === 'before') {
+      setPendingBefore((prev) => {
+        const item = prev[idx];
+        if (item) URL.revokeObjectURL(item.previewUrl);
+        return prev.filter((_, i) => i !== idx);
+      });
+      return;
+    }
+
+    setPendingAfter((prev) => {
+      const item = prev[idx];
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
+
+  // Cleanup pending preview URLs on unmount
+  useEffect(() => {
+    return () => {
+      pendingBefore.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      pendingAfter.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const uploadPendingPhotos = async (kind: 'before' | 'after') => {
     if (!activeJobId) return;
-    if (pendingPhotos.length === 0) return;
+
+    const pending = kind === 'before' ? pendingBefore : pendingAfter;
+    if (pending.length === 0) return;
 
     setUploading(true);
     setUploadProgress(0);
 
     let completedUploads = 0;
-    const totalFiles = pendingPhotos.length;
+    const totalFiles = pending.length;
 
     try {
-      for (const file of pendingPhotos) {
-        const fileRef = ref(storage, `job-photos/${activeJobId}/${Date.now()}_${file.name}`);
+      for (const item of pending) {
+        const file = item.file;
+        const fileRef = ref(storage, `job-photos/${activeJobId}/${kind}/${Date.now()}_${file.name}`);
 
-        // Resumable Upload (Sequential for UI simplicity)
         const uploadTask = uploadBytesResumable(fileRef, file);
 
         await new Promise<void>((resolve, reject) => {
           uploadTask.on(
             'state_changed',
             (snapshot) => {
-              // Progress Calculation (weighted across all files)
               const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
               const totalProgress = ((completedUploads + fileProgress) / totalFiles) * 100;
               setUploadProgress(totalProgress);
@@ -288,12 +372,19 @@ export default function JobLogs() {
             async () => {
               try {
                 const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+
+                const photo: JobPhoto = {
+                  url: downloadURL,
+                  kind,
+                  uploadedAt: new Date().toISOString()
+                };
+
                 await updateDoc(doc(db, 'job_logs', activeJobId), {
-                  photos: arrayUnion(downloadURL)
+                  photos: arrayUnion(photo)
                 });
+
                 completedUploads++;
-                // Immediately update local state so they appear in grid!
-                setJobPhotos((prev) => [...prev, downloadURL]);
+                setJobPhotos((prev) => [...prev, photo]);
                 resolve();
               } catch (err) {
                 console.error('Error saving URL:', err);
@@ -305,10 +396,8 @@ export default function JobLogs() {
         });
       }
 
-      toast.success(
-        totalFiles > 1 ? `Successfully uploaded ${totalFiles} photos!` : 'Photo uploaded successfully!'
-      );
-      setPendingPhotos([]);
+      toast.success(totalFiles > 1 ? `Uploaded ${totalFiles} photos!` : 'Photo uploaded!');
+      clearPending(kind);
     } catch (err) {
       console.error('Upload process encountered errors.');
     } finally {
@@ -461,45 +550,63 @@ export default function JobLogs() {
             <span className="text-xs text-zinc-600 font-normal">{jobPhotos.length} uploaded</span>
           </h3>
           
-          {/* Photo Grid */}
-          {jobPhotos.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mb-4">
-               {jobPhotos.map((url, i) => (
-                  <div key={i} className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group">
-                     <img src={url} alt="Job" className="w-full h-full object-cover" />
-                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <a href={url} target="_blank" rel="noreferrer" className="text-xs text-white underline">View</a>
-                     </div>
-                  </div>
-               ))}
-            </div>
-          )}
+          {/* Uploaded Photos */}
+          {(() => {
+            const before = jobPhotos.filter((p) => p.kind === 'before');
+            const after = jobPhotos.filter((p) => p.kind === 'after');
+            const unsorted = jobPhotos.filter((p) => p.kind === 'unsorted');
 
-          {/* Pending picks list */}
-          {pendingPhotos.length > 0 && !uploading && (
+            const Grid = ({ title, items }: { title: string; items: JobPhoto[] }) => {
+              if (items.length === 0) return null;
+              return (
+                <div className="mb-4">
+                  <p className="mb-2 text-xs text-zinc-400 uppercase tracking-wider font-semibold">{title}</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {items.map((p, i) => (
+                      <div
+                        key={`${p.url}-${i}`}
+                        className="aspect-square rounded-lg overflow-hidden border border-zinc-800 relative group"
+                      >
+                        <img src={p.url} alt="Job" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <a href={p.url} target="_blank" rel="noreferrer" className="text-xs text-white underline">
+                            View
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            };
+
+            return (
+              <>
+                <Grid title="Before" items={before} />
+                <Grid title="After" items={after} />
+                <Grid title="Other" items={unsorted} />
+              </>
+            );
+          })()}
+
+          {/* Pending Uploads: BEFORE */}
+          {pendingBefore.length > 0 && !uploading && (
             <div className="mb-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Pending Uploads</p>
-                <button
-                  type="button"
-                  className="text-xs text-zinc-500 hover:text-zinc-300"
-                  onClick={() => setPendingPhotos([])}
-                >
+                <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Pending BEFORE</p>
+                <button type="button" className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => clearPending('before')}>
                   Clear
                 </button>
               </div>
 
-              <div className="space-y-2">
-                {pendingPhotos.map((f, idx) => (
-                  <div key={`${f.name}-${idx}`} className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm text-zinc-200 truncate">{f.name}</p>
-                      <p className="text-xs text-zinc-500">{Math.round(f.size / 1024)} KB</p>
-                    </div>
+              <div className="grid grid-cols-4 gap-2">
+                {pendingBefore.map((p, idx) => (
+                  <div key={`${p.file.name}-${idx}`} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
+                    <img src={p.previewUrl} alt={p.file.name} className="w-full h-full object-cover" />
                     <button
                       type="button"
-                      className="text-xs px-2 py-1 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                      onClick={() => removePendingPhoto(idx)}
+                      className="absolute top-1 right-1 text-[10px] px-2 py-1 rounded bg-black/70 text-white hover:bg-black"
+                      onClick={() => removePendingPhoto('before', idx)}
                     >
                       Remove
                     </button>
@@ -510,52 +617,124 @@ export default function JobLogs() {
               <button
                 type="button"
                 className="mt-3 w-full py-3 rounded-xl font-bold text-sm bg-emerald-500 text-black hover:bg-emerald-400"
-                onClick={uploadPendingPhotos}
+                onClick={() => uploadPendingPhotos('before')}
               >
-                Upload {pendingPhotos.length} Photo{pendingPhotos.length === 1 ? '' : 's'}
+                Upload {pendingBefore.length} Before Photo{pendingBefore.length === 1 ? '' : 's'}
               </button>
             </div>
           )}
 
-          <label className={cn(
-              "flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
-              uploading ? "bg-zinc-900 border-zinc-800 cursor-wait" : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
-          )}>
-            {uploading ? (
-               <div className="flex flex-col items-center w-full px-8">
+          {/* Pending Uploads: AFTER */}
+          {pendingAfter.length > 0 && !uploading && (
+            <div className="mb-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Pending AFTER</p>
+                <button type="button" className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => clearPending('after')}>
+                  Clear
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2">
+                {pendingAfter.map((p, idx) => (
+                  <div key={`${p.file.name}-${idx}`} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
+                    <img src={p.previewUrl} alt={p.file.name} className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      className="absolute top-1 right-1 text-[10px] px-2 py-1 rounded bg-black/70 text-white hover:bg-black"
+                      onClick={() => removePendingPhoto('after', idx)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="mt-3 w-full py-3 rounded-xl font-bold text-sm bg-emerald-500 text-black hover:bg-emerald-400"
+                onClick={() => uploadPendingPhotos('after')}
+              >
+                Upload {pendingAfter.length} After Photo{pendingAfter.length === 1 ? '' : 's'}
+              </button>
+            </div>
+          )}
+
+          {/* Pickers */}
+          <div className="grid grid-cols-1 gap-3">
+            <label
+              className={cn(
+                "flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
+                uploading
+                  ? "bg-zinc-900 border-zinc-800 cursor-wait"
+                  : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
+              )}
+            >
+              {uploading ? (
+                <div className="flex flex-col items-center w-full px-8">
                   <Loader2 className="w-6 h-6 text-green-500 animate-spin mb-2" />
                   <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden mb-2">
-                     <div 
-                       className="bg-green-500 h-full transition-all duration-300" 
-                       style={{ width: `${uploadProgress}%` }}
-                     />
+                    <div className="bg-green-500 h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
                   </div>
                   <p className="text-xs text-zinc-500">{Math.round(uploadProgress)}% Uploading...</p>
-               </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <div className="mb-3 p-2 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
-                  <Camera className="w-6 h-6 text-zinc-400 group-hover:text-zinc-200" />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center pt-4 pb-4">
+                  <div className="mb-2 p-2 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
+                    <Camera className="w-5 h-5 text-zinc-400 group-hover:text-zinc-200" />
                   </div>
-                  <p className="mb-1 text-sm text-zinc-400 group-hover:text-zinc-200">
-                  <span className="font-semibold">Tap to select photos</span>
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                  Before/After photos
-                  </p>
-              </div>
-            )}
-            <input 
-              id="jobPhotos"
-              name="jobPhotos"
-              type="file" 
-              className="hidden" 
-              accept="image/*" 
-              onChange={handlePhotoPick}
-              disabled={uploading}
-              multiple
-            />
-          </label>
+                  <p className="text-sm text-zinc-300 font-semibold">Select BEFORE photos</p>
+                  <p className="text-xs text-zinc-500">(nothing uploads until you hit Upload)</p>
+                </div>
+              )}
+              <input
+                id="jobPhotosBefore"
+                name="jobPhotosBefore"
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={handlePhotoPick('before')}
+                disabled={uploading}
+                multiple
+              />
+            </label>
+
+            <label
+              className={cn(
+                "flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl transition-all cursor-pointer group relative overflow-hidden",
+                uploading
+                  ? "bg-zinc-900 border-zinc-800 cursor-wait"
+                  : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700"
+              )}
+            >
+              {uploading ? (
+                <div className="flex flex-col items-center w-full px-8">
+                  <Loader2 className="w-6 h-6 text-green-500 animate-spin mb-2" />
+                  <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden mb-2">
+                    <div className="bg-green-500 h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                  </div>
+                  <p className="text-xs text-zinc-500">{Math.round(uploadProgress)}% Uploading...</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center pt-4 pb-4">
+                  <div className="mb-2 p-2 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
+                    <Camera className="w-5 h-5 text-zinc-400 group-hover:text-zinc-200" />
+                  </div>
+                  <p className="text-sm text-zinc-300 font-semibold">Select AFTER photos</p>
+                  <p className="text-xs text-zinc-500">(nothing uploads until you hit Upload)</p>
+                </div>
+              )}
+              <input
+                id="jobPhotosAfter"
+                name="jobPhotosAfter"
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={handlePhotoPick('after')}
+                disabled={uploading}
+                multiple
+              />
+            </label>
+          </div>
         </section>
       </ErrorBoundary>
 

@@ -148,10 +148,14 @@ export async function makeTempTinyPng() {
 }
 
 export async function uploadOnePhoto(page) {
-  const input = await page.waitForSelector('input[type="file"][accept^="image"]');
+  // Pick a file into the BEFORE queue
+  const input = await page.waitForSelector('input#jobPhotosBefore[type="file"][accept^="image"]');
   const filePath = await makeTempTinyPng();
 
   await input.uploadFile(filePath);
+
+  // Click the Upload button for the before queue
+  await clickButtonByText(page, 'Upload', { timeout: 60000 });
 
   // Wait for upload to complete by observing that an img tile appears
   await page.waitForSelector('img[alt="Job"]', { timeout: 60000 });
