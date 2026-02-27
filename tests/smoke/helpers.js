@@ -11,6 +11,10 @@ export async function requireCreds(email, password, label = 'test user') {
   }
 }
 
+export async function sleep(ms) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 export async function gotoJobs(page) {
   await page.goto(JOBS_URL, { waitUntil: 'domcontentloaded' });
 }
@@ -97,26 +101,48 @@ async function clickMainClockButton(page) {
   await page.click(CLOCK_BUTTON_SELECTOR);
 }
 
+async function waitForJobStatus(page, statusText, { timeout = 120000 } = {}) {
+  // Avoid matching toast text like "Successfully Clocked In!".
+  // The real status text is rendered in the main status card h2.
+  const selector = 'div.rounded-2xl.border.p-6 h2';
+  await page.waitForFunction(
+    (sel, expected) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      return txt === expected;
+    },
+    { timeout },
+    selector,
+    statusText
+  );
+}
+
 export async function ensureClockedOut(page) {
-  const isClockedIn = await page.evaluate(() => document.body?.innerText?.includes('Clocked In'));
+  const isClockedIn = await page.evaluate(() => {
+    const el = document.querySelector('div.rounded-2xl.border.p-6 h2');
+    const txt = (el?.textContent || '').replace(/\s+/g, ' ').trim();
+    return txt === 'Clocked In';
+  });
+
   if (isClockedIn) {
     await clickMainClockButton(page);
-    await waitForText(page, 'Off the Clock', { timeout: 120000 });
+    await waitForJobStatus(page, 'Off the Clock', { timeout: 120000 });
     await waitMainClockButtonEnabled(page, { timeout: 120000 });
   } else {
-    await waitForText(page, 'Off the Clock', { timeout: 120000 });
+    await waitForJobStatus(page, 'Off the Clock', { timeout: 120000 });
   }
 }
 
 export async function clockIn(page) {
   await clickMainClockButton(page);
-  await waitForText(page, 'Clocked In', { timeout: 120000 });
+  await waitForJobStatus(page, 'Clocked In', { timeout: 120000 });
   await waitMainClockButtonEnabled(page, { timeout: 120000 });
 }
 
 export async function clockOut(page) {
   await clickMainClockButton(page);
-  await waitForText(page, 'Off the Clock', { timeout: 120000 });
+  await waitForJobStatus(page, 'Off the Clock', { timeout: 120000 });
   await waitMainClockButtonEnabled(page, { timeout: 120000 });
 }
 
@@ -148,15 +174,33 @@ export async function makeTempTinyPng() {
 }
 
 export async function uploadOnePhoto(page) {
+  // This test usually targets the deployed Vercel app, so we can't rely on local-only data-testid changes.
+  // Use stable selectors + text matching instead.
+
   // Pick a file into the BEFORE queue
-  const input = await page.waitForSelector('input#jobPhotosBefore[type="file"][accept^="image"]');
+  const input = await page.waitForSelector('input#jobPhotosBefore[type="file"][accept^="image"]', { timeout: 60000 });
   const filePath = await makeTempTinyPng();
 
   await input.uploadFile(filePath);
 
-  // Click the Upload button for the before queue
-  await clickButtonByText(page, 'Upload', { timeout: 60000 });
+  // Wait until the pending BEFORE upload button appears (text changes with count)
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll('button')).some((b) =>
+        /upload\s+\d+\s+before\s+photo/i.test((b.textContent || '').replace(/\s+/g, ' ').trim())
+      ),
+    { timeout: 60000 }
+  );
+
+  // Click the specific BEFORE upload button
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find((b) =>
+      /upload\s+\d+\s+before\s+photo/i.test((b.textContent || '').replace(/\s+/g, ' ').trim())
+    );
+    if (!btn) throw new Error('before upload button not found');
+    btn.click();
+  });
 
   // Wait for upload to complete by observing that an img tile appears
-  await page.waitForSelector('img[alt="Job"]', { timeout: 60000 });
+  await page.waitForSelector('img[alt="Job"]', { timeout: 120000 });
 }

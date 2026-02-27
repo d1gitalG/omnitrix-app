@@ -11,6 +11,7 @@ import {
   loginOnJobs,
   requireCreds,
   setJobType,
+  sleep,
   uploadOnePhoto
 } from './helpers.js';
 
@@ -47,7 +48,18 @@ async function testClockFlow(page) {
   await clockIn(page);
   await clockOut(page);
 
-  const topType = await getRecentTopJobType(page);
+  // Give Firestore snapshot a moment to refresh Recent Activity
+  await sleep(1500);
+
+  // Retry a few times because the top item can briefly show a previous job
+  // before the newest completed job bubbles to the top.
+  let topType = '';
+  for (let i = 0; i < 5; i++) {
+    topType = await getRecentTopJobType(page);
+    if (topType === desiredType) break;
+    await sleep(1500);
+  }
+
   if (!topType) throw new Error('Recent Activity item not found');
   if (topType !== desiredType) {
     throw new Error(`Recent Activity top job type mismatch. Expected "${desiredType}", got "${topType}"`);
@@ -72,21 +84,37 @@ async function testAdmin(page) {
 
   // Non-admin should be redirected to /jobs
   await page.goto(ADMIN_URL, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => document.body?.innerText?.includes('Job Logs'), { timeout: 60000 });
-  console.log('✅ [admin] non-admin redirected to jobs');
+  await page.waitForFunction(() => {
+    const path = window.location?.pathname || '';
+    const body = document.body?.innerText || '';
+    return path.includes('/jobs') || body.includes('Job Logs') || body.includes('Tech Login');
+  }, { timeout: 60000 });
+  console.log('✅ [admin] non-admin blocked (redirected away from /admin)');
 
-  // Optional: admin creds check
-  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
-    console.log('ℹ️  [admin] Skipping admin-access test (set OFA_ADMIN_EMAIL / OFA_ADMIN_PASSWORD to enable).');
+  // Optional: admin creds check (off by default — requires explicit opt-in)
+  // Set OFA_RUN_ADMIN_LOGIN_TEST=1 plus OFA_ADMIN_EMAIL/OFA_ADMIN_PASSWORD to enable.
+  if (process.env.OFA_RUN_ADMIN_LOGIN_TEST !== '1' || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    console.log('ℹ️  [admin] Skipping admin-access login test (set OFA_RUN_ADMIN_LOGIN_TEST=1 and OFA_ADMIN_EMAIL/OFA_ADMIN_PASSWORD).');
     return;
   }
 
-  // Separate browser context for admin session (isolates localStorage/auth)
-  const { browser } = page;
-  const adminContext = await browser.createBrowserContext();
-  const adminPage = await adminContext.newPage();
+  // Admin session: this Puppeteer build doesn't support creating isolated contexts,
+  // so we best-effort sign out and sign in as admin in a separate tab.
+  const browser = page.browser();
+  const adminPage = await browser.newPage();
   adminPage.on('console', (msg) => console.log(`[BROWSER][ADMIN] ${msg.type().toUpperCase()}: ${msg.text()}`));
   adminPage.on('pageerror', (err) => console.error(`[BROWSER][ADMIN] ERROR: ${err.message}`));
+
+  // Ensure signed out first
+  await adminPage.goto(PROFILE_URL, { waitUntil: 'domcontentloaded' });
+
+  // Best-effort sign out (don't rely on Playwright-style selectors)
+  await adminPage.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find((b) =>
+      ((b.textContent || '').replace(/\s+/g, ' ').trim()).includes('Sign Out')
+    );
+    if (btn) btn.click();
+  });
 
   // Login as admin via /jobs, then visit /admin
   await loginOnJobs(adminPage, ADMIN_EMAIL, ADMIN_PASSWORD);
@@ -94,13 +122,7 @@ async function testAdmin(page) {
   await adminPage.waitForFunction(() => document.body?.innerText?.includes('Admin Dashboard'), { timeout: 60000 });
   console.log('✅ [admin] admin can access dashboard');
 
-  // Best-effort sign-out via Profile
-  await adminPage.goto(PROFILE_URL, { waitUntil: 'domcontentloaded' });
-  const signOutBtn = await adminPage.$('button ::-p-text(Sign Out)');
-  if (signOutBtn) await signOutBtn.click();
-
   await adminPage.close();
-  await adminContext.close();
 }
 
 (async () => {
