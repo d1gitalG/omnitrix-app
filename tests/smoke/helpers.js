@@ -11,6 +11,10 @@ export async function requireCreds(email, password, label = 'test user') {
   }
 }
 
+export async function sleep(ms) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 export async function gotoJobs(page) {
   await page.goto(JOBS_URL, { waitUntil: 'domcontentloaded' });
 }

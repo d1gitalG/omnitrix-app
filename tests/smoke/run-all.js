@@ -11,6 +11,7 @@ import {
   loginOnJobs,
   requireCreds,
   setJobType,
+  sleep,
   uploadOnePhoto
 } from './helpers.js';
 
@@ -47,7 +48,18 @@ async function testClockFlow(page) {
   await clockIn(page);
   await clockOut(page);
 
-  const topType = await getRecentTopJobType(page);
+  // Give Firestore snapshot a moment to refresh Recent Activity
+  await sleep(1500);
+
+  // Retry a few times because the top item can briefly show a previous job
+  // before the newest completed job bubbles to the top.
+  let topType = '';
+  for (let i = 0; i < 5; i++) {
+    topType = await getRecentTopJobType(page);
+    if (topType === desiredType) break;
+    await sleep(1500);
+  }
+
   if (!topType) throw new Error('Recent Activity item not found');
   if (topType !== desiredType) {
     throw new Error(`Recent Activity top job type mismatch. Expected "${desiredType}", got "${topType}"`);
