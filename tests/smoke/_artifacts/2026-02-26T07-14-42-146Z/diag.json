@@ -1,0 +1,11 @@
+{
+  "title": "omnitrix-app",
+  "hasEmailInput": false,
+  "hasPasswordInput": false,
+  "bodyTextHead": "Omnitrix.app\nJob Logs\nProfile\nClocked In\n\n00:02:00\n\nJOB PHOTOS\n0 UPLOADED\n\nTap to upload\n\nBefore/After photos\n\nRECENT ACTIVITY\n\nNo recent logs found.\n\nJobs\nTechRef\nTraining\nProfile",
+  "clockButton": {
+    "exists": true,
+    "disabled": true,
+    "text": ""
+  }
+}

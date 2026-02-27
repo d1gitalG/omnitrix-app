@@ -21,6 +21,7 @@ export default function JobLogs() {
 
   // Job State
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingClockAction, setPendingClockAction] = useState<'in' | 'out' | null>(null);
   const [jobType, setJobType] = useState('Service Call');
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<Date | null>(null);
@@ -74,17 +75,25 @@ export default function JobLogs() {
   useEffect(() => {
     if (!user) return;
 
+    // Avoid composite index requirements by not using `orderBy` on a multi-where query.
+    // We'll sort client-side by endTime and then slice.
     const q = query(
       collection(db, 'job_logs'),
       where('userId', '==', user.uid),
       where('status', '==', 'completed'),
-      orderBy('endTime', 'desc'),
-      limit(5)
+      limit(25)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setRecentJobs(jobs);
+      const jobs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+      jobs.sort((a: any, b: any) => {
+        const aMs = a?.endTime?.toDate ? a.endTime.toDate().getTime() : 0;
+        const bMs = b?.endTime?.toDate ? b.endTime.toDate().getTime() : 0;
+        return bMs - aMs;
+      });
+
+      setRecentJobs(jobs.slice(0, 5));
     });
 
     return () => unsubscribe();
@@ -97,18 +106,70 @@ export default function JobLogs() {
       interval = setInterval(() => {
         const now = new Date();
         const diff = now.getTime() - startTime.getTime();
-        
+
         const hours = Math.floor(diff / (1000 * 60 * 60));
         const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
         const seconds = Math.floor((diff % (1000 * 60)) / 1000);
 
         setElapsedTime(
-          `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+          `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds
+            .toString()
+            .padStart(2, '0')}`
         );
       }, 1000);
     }
     return () => clearInterval(interval);
   }, [activeJobId, startTime]);
+
+  // 4a. If we have a resolved job state (clocked in or out), never leave the UI stuck in a submitting state.
+  // This covers edge cases where `pendingClockAction` gets out of sync with snapshot timing.
+  useEffect(() => {
+    // When activeJobId changes (including to null), we know the app has a definitive state.
+    setIsSubmitting(false);
+  }, [activeJobId]);
+
+  // 4b. Clock action resolution (don’t block UI on server ack)
+  useEffect(() => {
+    if (!pendingClockAction) return;
+
+    if (pendingClockAction === 'in' && activeJobId) {
+      setIsSubmitting(false);
+      setPendingClockAction(null);
+      toast.success('Successfully Clocked In!');
+    }
+
+    if (pendingClockAction === 'out' && !activeJobId) {
+      setIsSubmitting(false);
+      setPendingClockAction(null);
+      toast.success('Successfully Clocked Out!');
+    }
+  }, [pendingClockAction, activeJobId]);
+
+  // 4c. Safety timeout: don’t spin forever (clock actions)
+  useEffect(() => {
+    if (!pendingClockAction) return;
+
+    const timeout = setTimeout(() => {
+      toast.error('Sync is taking too long — check connection and try again.');
+      setIsSubmitting(false);
+      setPendingClockAction(null);
+    }, 15000);
+
+    return () => clearTimeout(timeout);
+  }, [pendingClockAction]);
+
+  // 4d. Extra safety: if `isSubmitting` ever gets stuck true (for any reason), clear it.
+  // This prevents the Clock button from staying disabled forever in flaky network/offline cases.
+  useEffect(() => {
+    if (!isSubmitting) return;
+
+    const t = setTimeout(() => {
+      setIsSubmitting(false);
+      setPendingClockAction(null);
+    }, 20000);
+
+    return () => clearTimeout(t);
+  }, [isSubmitting]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,47 +186,39 @@ export default function JobLogs() {
     }
   };
 
-  const handleClockIn = async () => {
+  const handleClockIn = () => {
     if (!user || isSubmitting) return;
     setIsSubmitting(true);
-    try {
-      await addDoc(collection(db, 'job_logs'), {
-        userId: user.uid,
-        startTime: Timestamp.now(),
-        status: 'in_progress',
-        jobType: jobType,
-        photos: []
-      });
-      toast.success('Successfully Clocked In!');
-    } catch (err) {
-      console.error("Error clocking in:", err);
-      toast.error("Failed to clock in. Please try again.");
-    } finally {
+    setPendingClockAction('in');
+
+    addDoc(collection(db, 'job_logs'), {
+      userId: user.uid,
+      startTime: Timestamp.now(),
+      status: 'in_progress',
+      jobType: jobType,
+      photos: []
+    }).catch((err) => {
+      console.error('Error clocking in:', err);
+      toast.error('Failed to clock in. Please try again.');
       setIsSubmitting(false);
-    }
+      setPendingClockAction(null);
+    });
   };
 
-  const handleClockOut = async () => {
+  const handleClockOut = () => {
     if (!activeJobId || isSubmitting) return;
     setIsSubmitting(true);
-    try {
-      await updateDoc(doc(db, 'job_logs', activeJobId), {
-        endTime: Timestamp.now(),
-        status: 'completed'
-      });
-      // Force local state clear immediately so UI updates
-      setActiveJobId(null);
-      setStartTime(null);
-      setElapsedTime('00:00:00');
-      setJobPhotos([]);
-      
-      toast.success('Successfully Clocked Out!');
-    } catch (err) {
-      console.error("Error clocking out:", err);
-      toast.error("Failed to clock out. Please try again.");
-    } finally {
+    setPendingClockAction('out');
+
+    updateDoc(doc(db, 'job_logs', activeJobId), {
+      endTime: Timestamp.now(),
+      status: 'completed'
+    }).catch((err) => {
+      console.error('Error clocking out:', err);
+      toast.error('Failed to clock out. Please try again.');
       setIsSubmitting(false);
-    }
+      setPendingClockAction(null);
+    });
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

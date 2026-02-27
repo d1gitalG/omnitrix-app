@@ -1,0 +1,11 @@
+{
+  "title": "localhost",
+  "hasEmailInput": false,
+  "hasPasswordInput": false,
+  "bodyTextHead": "This site can’t be reached\n\nlocalhost refused to connect.\n\nTry:\n\nChecking the connection\nChecking the proxy and the firewall\nERR_CONNECTION_REFUSED\nReload\nDetails",
+  "clockButton": {
+    "exists": false,
+    "disabled": null,
+    "text": ""
+  }
+}

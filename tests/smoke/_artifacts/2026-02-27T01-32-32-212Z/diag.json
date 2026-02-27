@@ -1,0 +1,11 @@
+{
+  "title": "",
+  "hasEmailInput": false,
+  "hasPasswordInput": false,
+  "bodyTextHead": "",
+  "clockButton": {
+    "exists": false,
+    "disabled": null,
+    "text": ""
+  }
+}
