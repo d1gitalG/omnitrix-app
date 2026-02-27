@@ -27,3 +27,7 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Smoke test artifacts
+tests/smoke/_artifacts/
+puppeteer-data/

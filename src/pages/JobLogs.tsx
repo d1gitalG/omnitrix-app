@@ -47,6 +47,14 @@ export default function JobLogs() {
   const [pendingAfter, setPendingAfter] = useState<PendingPhoto[]>([]);
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
 
+  // Site & Notes State
+  const [siteName, setSiteName] = useState('');
+  const [address, setAddress] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [notes, setNotes] = useState('');
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+
   // 1. Listen for Auth State
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -89,6 +97,13 @@ export default function JobLogs() {
           .filter(Boolean) as JobPhoto[];
 
         setJobPhotos(normalized);
+        
+        // Sync site info from active job
+        setSiteName(data.siteName || '');
+        setAddress(data.address || '');
+        setContactName(data.contactName || '');
+        setContactPhone(data.contactPhone || '');
+        setNotes(data.notes || '');
       } else {
         setActiveJobId(null);
         setStartTime(null);
@@ -233,6 +248,11 @@ export default function JobLogs() {
       startTime: Timestamp.now(),
       status: 'in_progress',
       jobType: jobType,
+      siteName: siteName,
+      address: address,
+      contactName: contactName,
+      contactPhone: contactPhone,
+      notes: notes,
       photos: []
     }).catch((err) => {
       console.error('Error clocking in:', err);
@@ -256,6 +276,26 @@ export default function JobLogs() {
       setIsSubmitting(false);
       setPendingClockAction(null);
     });
+  };
+
+  const handleSaveNotes = async () => {
+    if (!activeJobId || isSavingNotes) return;
+    setIsSavingNotes(true);
+    try {
+      await updateDoc(doc(db, 'job_logs', activeJobId), {
+        notes: notes,
+        siteName,
+        address,
+        contactName,
+        contactPhone
+      });
+      toast.success('Job details saved');
+    } catch (err) {
+      console.error('Error saving job details:', err);
+      toast.error('Failed to save details');
+    } finally {
+      setIsSavingNotes(false);
+    }
   };
 
   const validatePhotoFiles = (files: File[]) => {
@@ -544,9 +584,79 @@ export default function JobLogs() {
         </div>
       </div>
 
+      {/* Job Details Section (Site Info & Notes) */}
+      <section className={cn("bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 transition-opacity", !activeJobId && "opacity-50 pointer-events-none")}>
+        <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Site Info & Notes</h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold ml-1">Site Name</label>
+            <input 
+              type="text"
+              placeholder="e.g. Howard County Library"
+              value={siteName}
+              onChange={(e) => setSiteName(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white text-sm focus:border-green-500 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold ml-1">Address</label>
+            <input 
+              type="text"
+              placeholder="Street, City, Zip"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white text-sm focus:border-green-500 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold ml-1">Contact Name</label>
+            <input 
+              type="text"
+              placeholder="Who are you meeting?"
+              value={contactName}
+              onChange={(e) => setContactName(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white text-sm focus:border-green-500 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold ml-1">Contact Phone</label>
+            <input 
+              type="tel"
+              placeholder="(555) 000-0000"
+              value={contactPhone}
+              onChange={(e) => setContactPhone(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white text-sm focus:border-green-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] text-zinc-500 uppercase font-bold ml-1">Job Notes</label>
+          <textarea 
+            placeholder="Describe work performed, materials used, or issues encountered..."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={4}
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white text-sm focus:border-green-500 focus:outline-none resize-none"
+          />
+        </div>
+
+        <button
+          onClick={handleSaveNotes}
+          disabled={!activeJobId || isSavingNotes}
+          className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+        >
+          {isSavingNotes ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save Details'}
+        </button>
+      </section>
+
       {/* Photo Upload Section */}
       <ErrorBoundary onReset={() => setUploading(false)}>
-        <section className={cn("transition-opacity duration-300", !activeJobId && "opacity-50 pointer-events-none")}>
+        <section
+          data-testid="job-photos-section"
+          className={cn("transition-opacity duration-300", !activeJobId && "opacity-50 pointer-events-none")}
+        >
           <h3 className="mb-3 text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
             <span>Job Photos</span>
             <span className="text-xs text-zinc-600 font-normal">{jobPhotos.length} uploaded</span>
@@ -617,6 +727,7 @@ export default function JobLogs() {
               </div>
 
               <button
+                data-testid="upload-before-button"
                 type="button"
                 className="mt-3 w-full py-3 rounded-xl font-bold text-sm bg-emerald-500 text-black hover:bg-emerald-400"
                 onClick={() => uploadPendingPhotos('before')}
@@ -652,6 +763,7 @@ export default function JobLogs() {
               </div>
 
               <button
+                data-testid="upload-after-button"
                 type="button"
                 className="mt-3 w-full py-3 rounded-xl font-bold text-sm bg-emerald-500 text-black hover:bg-emerald-400"
                 onClick={() => uploadPendingPhotos('after')}
@@ -689,6 +801,7 @@ export default function JobLogs() {
                 </div>
               )}
               <input
+                data-testid="jobPhotosBefore"
                 id="jobPhotosBefore"
                 name="jobPhotosBefore"
                 type="file"
@@ -726,6 +839,7 @@ export default function JobLogs() {
                 </div>
               )}
               <input
+                data-testid="jobPhotosAfter"
                 id="jobPhotosAfter"
                 name="jobPhotosAfter"
                 type="file"

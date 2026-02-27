@@ -10,16 +10,23 @@ interface JobLog {
   userId: string;
   userName?: string;
   type: string;
+  jobType?: string; // Some docs use jobType instead of type
   status: 'in_progress' | 'completed';
   startTime: any;
   endTime?: any;
-  photos?: string[];
+  photos?: any[]; // Normalized photos
   location?: string;
+  siteName?: string;
+  address?: string;
+  contactName?: string;
+  contactPhone?: string;
+  notes?: string;
 }
 
 const Admin: React.FC = () => {
   const [activeJobs, setActiveJobs] = useState<JobLog[]>([]);
   const [completedJobs, setCompletedJobs] = useState<JobLog[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [_loading, setLoading] = useState(true);
 
   const isAdmin = auth.currentUser?.email === 'gianni@omnitrix.tech';
