@@ -153,37 +153,69 @@ export default function JobLogs() {
   useEffect(() => {
     if (!user) return;
 
-    // Avoid composite index requirements by not using `orderBy` on a multi-where query.
-    // We'll sort client-side by endTime and then slice.
-    const q = query(
+    const toRecentJob = (d: { id: string; data: () => Record<string, unknown> }): RecentJobItem => {
+      const data = d.data();
+      return {
+        id: d.id,
+        jobType: typeof data.jobType === 'string' ? data.jobType : undefined,
+        startTime: (data.startTime as FireTimestamp) || undefined,
+        endTime: (data.endTime as FireTimestamp) || undefined,
+        photos: Array.isArray(data.photos) ? data.photos : []
+      };
+    };
+
+    // Prefer server-side ordering so we always include the most recent jobs.
+    // This may require a Firestore composite index; if it fails, fallback to a larger un-ordered sample.
+    const qPreferred = query(
       collection(db, 'job_logs'),
       where('userId', '==', user.uid),
       where('status', '==', 'completed'),
-      limit(25)
+      orderBy('endTime', 'desc'),
+      limit(10)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const jobs: RecentJobItem[] = snapshot.docs.map((d) => {
-        const data = d.data() as Record<string, unknown>;
-        return {
-          id: d.id,
-          jobType: typeof data.jobType === 'string' ? data.jobType : undefined,
-          startTime: (data.startTime as FireTimestamp) || undefined,
-          endTime: (data.endTime as FireTimestamp) || undefined,
-          photos: Array.isArray(data.photos) ? data.photos : []
-        };
-      });
+    const qFallback = query(
+      collection(db, 'job_logs'),
+      where('userId', '==', user.uid),
+      where('status', '==', 'completed'),
+      limit(200)
+    );
 
-      jobs.sort((a, b) => {
-        const aMs = a?.endTime?.toDate ? a.endTime.toDate().getTime() : 0;
-        const bMs = b?.endTime?.toDate ? b.endTime.toDate().getTime() : 0;
-        return bMs - aMs;
-      });
+    let unsubscribe: (() => void) | null = null;
 
-      setRecentJobs(jobs.slice(0, 5));
-    });
+    const subscribe = (q: Parameters<typeof onSnapshot>[0]) =>
+      onSnapshot(
+        q,
+        (snapshot) => {
+          const jobs: RecentJobItem[] = snapshot.docs.map((d) => toRecentJob({ id: d.id, data: () => d.data() as Record<string, unknown> }));
 
-    return () => unsubscribe();
+          jobs.sort((a, b) => {
+            const aMs = a?.endTime?.toDate ? a.endTime.toDate().getTime() : 0;
+            const bMs = b?.endTime?.toDate ? b.endTime.toDate().getTime() : 0;
+            return bMs - aMs;
+          });
+
+          setRecentJobs(jobs.slice(0, 5));
+        },
+        (err) => {
+          // If the preferred query fails due to missing index, try the fallback.
+          const msg = String((err as { message?: unknown })?.message || err);
+          console.warn('[Recent Activity] query failed:', msg);
+          if (q === qPreferred) {
+            try {
+              unsubscribe = subscribe(qFallback);
+            } catch (e) {
+              console.warn('[Recent Activity] fallback query failed:', e);
+            }
+          }
+        }
+      );
+
+    unsubscribe = subscribe(qPreferred);
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [user]);
 
   // 4. Timer Logic
