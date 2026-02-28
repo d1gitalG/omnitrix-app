@@ -165,7 +165,7 @@ const Admin: React.FC = () => {
           </div>
           <select
             value={activeSort}
-            onChange={(e) => setActiveSort(e.target.value as any)}
+            onChange={(e) => setActiveSort(e.target.value as 'newest' | 'oldest')}
             className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300"
           >
             <option value="newest">Newest</option>
@@ -226,7 +226,7 @@ const Admin: React.FC = () => {
           </div>
           <select
             value={historySort}
-            onChange={(e) => setHistorySort(e.target.value as any)}
+            onChange={(e) => setHistorySort(e.target.value as 'newest' | 'oldest')}
             className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300"
           >
             <option value="newest">Newest</option>
@@ -272,7 +272,7 @@ const Admin: React.FC = () => {
                 {/* Photo Gallery Thumbnail Map */}
                 {job.photos && job.photos.length > 0 && (
                   <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                    {job.photos.map((p: any, idx: number) => (
+                    {job.photos.map((p, idx: number) => (
                       <a key={idx} href={p.url} target="_blank" rel="noreferrer">
                         <img
                           src={p.url}
