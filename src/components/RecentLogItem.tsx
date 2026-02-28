@@ -1,26 +1,40 @@
-type FireTimestamp = { seconds: number };
+type FireTimestamp = {
+  seconds?: number;
+  toDate?: () => Date;
+};
 
 type RecentJob = {
+  id?: string;
   jobType?: string;
   startTime?: FireTimestamp;
   endTime?: FireTimestamp;
   photos?: unknown[];
 };
 
+const toDateSafe = (t?: FireTimestamp) => {
+  if (!t) return null;
+  if (t.toDate) return t.toDate();
+  if (typeof t.seconds === 'number') return new Date(t.seconds * 1000);
+  return null;
+};
+
 // A simple utility to format Firestore Timestamps
 const formatDate = (timestamp?: FireTimestamp) => {
-  if (!timestamp) return 'N/A';
-  return new Date(timestamp.seconds * 1000).toLocaleString();
+  const d = toDateSafe(timestamp);
+  if (!d) return 'N/A';
+  return d.toLocaleString();
 };
 
 // A simple utility to calculate duration between two Timestamps
 const formatDuration = (start?: FireTimestamp, end?: FireTimestamp) => {
-  if (!start || !end) return 'N/A';
-  const diff = end.seconds - start.seconds;
-  const h = Math.floor(diff / 3600);
-  const m = Math.floor((diff % 3600) / 60);
-  const s = Math.floor(diff % 60);
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  const s = toDateSafe(start);
+  const e = toDateSafe(end);
+  if (!s || !e) return 'N/A';
+  const diffSeconds = Math.max(0, Math.floor((e.getTime() - s.getTime()) / 1000));
+  const h = Math.floor(diffSeconds / 3600);
+  const m = Math.floor((diffSeconds % 3600) / 60);
+  const sec = Math.floor(diffSeconds % 60);
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
 };
 
 export default function RecentLogItem({ job }: { job: RecentJob }) {

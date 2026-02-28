@@ -46,8 +46,8 @@ export default function JobLogs() {
   const [pendingBefore, setPendingBefore] = useState<PendingPhoto[]>([]);
   const [pendingAfter, setPendingAfter] = useState<PendingPhoto[]>([]);
 
-  type FireTimestamp = { toDate?: () => Date };
-  type RecentJob = {
+  type FireTimestamp = { seconds?: number; toDate?: () => Date };
+  type RecentJobItem = {
     id: string;
     jobType?: string;
     startTime?: FireTimestamp;
@@ -55,7 +55,7 @@ export default function JobLogs() {
     photos?: unknown[];
   };
 
-  const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
+  const [recentJobs, setRecentJobs] = useState<RecentJobItem[]>([]);
 
   // Site & Notes State
   const [siteName, setSiteName] = useState('');
@@ -163,7 +163,7 @@ export default function JobLogs() {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const jobs: RecentJob[] = snapshot.docs.map((d) => {
+      const jobs: RecentJobItem[] = snapshot.docs.map((d) => {
         const data = d.data() as Record<string, unknown>;
         return {
           id: d.id,
