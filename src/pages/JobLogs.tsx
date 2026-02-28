@@ -45,7 +45,17 @@ export default function JobLogs() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [pendingBefore, setPendingBefore] = useState<PendingPhoto[]>([]);
   const [pendingAfter, setPendingAfter] = useState<PendingPhoto[]>([]);
-  const [recentJobs, setRecentJobs] = useState<any[]>([]);
+
+  type FireTimestamp = { toDate?: () => Date };
+  type RecentJob = {
+    id: string;
+    jobType?: string;
+    startTime?: FireTimestamp;
+    endTime?: FireTimestamp;
+    photos?: unknown[];
+  };
+
+  const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
 
   // Site & Notes State
   const [siteName, setSiteName] = useState('');
@@ -86,17 +96,22 @@ export default function JobLogs() {
         setActiveJobId(jobDoc.id);
         setStartTime(data.startTime.toDate());
 
-        const rawPhotos = Array.isArray(data.photos) ? data.photos : [];
+        const rawPhotos: unknown[] = Array.isArray(data.photos) ? (data.photos as unknown[]) : [];
         const normalized: JobPhoto[] = rawPhotos
-          .map((p: any) => {
+          .map((p: unknown) => {
             if (typeof p === 'string') return { url: p, kind: 'unsorted' as const };
-            if (p && typeof p === 'object' && typeof p.url === 'string') {
-              const kind: PhotoKind = p.kind === 'before' || p.kind === 'after' ? p.kind : 'unsorted';
-              return { url: p.url, kind, uploadedAt: typeof p.uploadedAt === 'string' ? p.uploadedAt : undefined };
+            if (p && typeof p === 'object' && 'url' in p && typeof (p as { url?: unknown }).url === 'string') {
+              const obj = p as { url: string; kind?: unknown; uploadedAt?: unknown };
+              const kind: PhotoKind = obj.kind === 'before' || obj.kind === 'after' ? obj.kind : 'unsorted';
+              return {
+                url: obj.url,
+                kind,
+                uploadedAt: typeof obj.uploadedAt === 'string' ? obj.uploadedAt : undefined
+              };
             }
             return null;
           })
-          .filter(Boolean) as JobPhoto[];
+          .filter((x): x is JobPhoto => !!x);
 
         setJobPhotos(normalized);
         
@@ -148,9 +163,18 @@ export default function JobLogs() {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const jobs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const jobs: RecentJob[] = snapshot.docs.map((d) => {
+        const data = d.data() as Record<string, unknown>;
+        return {
+          id: d.id,
+          jobType: typeof data.jobType === 'string' ? data.jobType : undefined,
+          startTime: (data.startTime as FireTimestamp) || undefined,
+          endTime: (data.endTime as FireTimestamp) || undefined,
+          photos: Array.isArray(data.photos) ? data.photos : []
+        };
+      });
 
-      jobs.sort((a: any, b: any) => {
+      jobs.sort((a, b) => {
         const aMs = a?.endTime?.toDate ? a.endTime.toDate().getTime() : 0;
         const bMs = b?.endTime?.toDate ? b.endTime.toDate().getTime() : 0;
         return bMs - aMs;
@@ -164,7 +188,7 @@ export default function JobLogs() {
 
   // 4. Timer Logic
   useEffect(() => {
-    let interval: any;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (activeJobId && startTime) {
       interval = setInterval(() => {
         const now = new Date();
@@ -241,7 +265,8 @@ export default function JobLogs() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       toast.success('Signed in!');
-    } catch (err: any) {
+    } catch (err) {
+      console.error('Sign in error:', err);
       setAuthError('Invalid email or password');
       toast.error('Sign in failed.');
     } finally {
@@ -468,7 +493,7 @@ export default function JobLogs() {
 
       toast.success(totalFiles > 1 ? `Uploaded ${totalFiles} photos!` : 'Photo uploaded!');
       clearPending(kind);
-    } catch (err) {
+    } catch {
       console.error('Upload process encountered errors.');
     } finally {
       setUploading(false);

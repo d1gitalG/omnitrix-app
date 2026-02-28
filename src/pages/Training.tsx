@@ -3,7 +3,11 @@ import { CheckCircle2, ChevronRight, FileText, Youtube } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db, auth } from '../lib/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
+
+type TrainingProgressDoc = { completed?: string[] };
+
+type UserDoc = { techLevel?: number };
 
 const level1Checklist = [
   { id: 'l1-1', title: 'OSHA Safety Basics', desc: 'Complete the initial OSHA 10 safety review.', category: 'Safety' },
@@ -43,7 +47,7 @@ const level3Videos = [
 
 export default function Training() {
   const [completed, setCompleted] = useState<string[]>([]);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [techLevel, setTechLevel] = useState<number>(1);
   
   // Auth Listener
@@ -61,8 +65,9 @@ export default function Training() {
     // Fetch Level via listener (works with offline persistence)
     const userRef = doc(db, 'users', user.uid);
     const unsubLevel = onSnapshot(userRef, (userSnap) => {
-      if (userSnap.exists() && userSnap.data().techLevel) {
-        setTechLevel(userSnap.data().techLevel);
+      if (userSnap.exists()) {
+        const data = userSnap.data() as UserDoc;
+        if (typeof data.techLevel === 'number') setTechLevel(data.techLevel);
       }
     });
 
@@ -70,7 +75,8 @@ export default function Training() {
     const docRef = doc(db, 'training_progress', user.uid);
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
-        setCompleted(docSnap.data().completed || []);
+        const data = docSnap.data() as TrainingProgressDoc;
+        setCompleted(Array.isArray(data.completed) ? data.completed : []);
       }
     });
 
