@@ -4,10 +4,16 @@ import { cn } from '../lib/utils';
 import { db, auth } from '../lib/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
+import { safeParseWith } from '../lib/validation.ts';
+import { z } from 'zod';
 
-type TrainingProgressDoc = { completed?: string[] };
+const TrainingProgressSchema = z.object({
+  completed: z.array(z.string()).optional(),
+});
 
-type UserDoc = { techLevel?: number };
+const UserDocSchema = z.object({
+  techLevel: z.number().int().min(1).max(3).optional(),
+});
 
 const level1Checklist = [
   { id: 'l1-1', title: 'OSHA Safety Basics', desc: 'Complete the initial OSHA 10 safety review.', category: 'Safety' },
@@ -66,7 +72,12 @@ export default function Training() {
     const userRef = doc(db, 'users', user.uid);
     const unsubLevel = onSnapshot(userRef, (userSnap) => {
       if (userSnap.exists()) {
-        const data = userSnap.data() as UserDoc;
+        const raw = userSnap.data();
+        const parsed = safeParseWith(UserDocSchema, raw);
+        if (!parsed.ok) {
+          console.warn('[Training] Invalid user doc shape:', parsed.issues);
+        }
+        const data = parsed.ok ? parsed.value : (raw as Record<string, unknown>);
         if (typeof data.techLevel === 'number') setTechLevel(data.techLevel);
       }
     });
@@ -75,7 +86,12 @@ export default function Training() {
     const docRef = doc(db, 'training_progress', user.uid);
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
-        const data = docSnap.data() as TrainingProgressDoc;
+        const raw = docSnap.data();
+        const parsed = safeParseWith(TrainingProgressSchema, raw);
+        if (!parsed.ok) {
+          console.warn('[Training] Invalid training_progress shape:', parsed.issues);
+        }
+        const data = parsed.ok ? parsed.value : (raw as Record<string, unknown>);
         setCompleted(Array.isArray(data.completed) ? data.completed : []);
       }
     });

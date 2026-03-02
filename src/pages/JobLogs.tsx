@@ -3,7 +3,7 @@ import { Camera, Clock, LogIn, Loader2, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { db, auth, storage } from '../lib/firebase';
-import { JobLogSchema, safeParseWith } from '../lib/validation';
+import { JobLogSchema, safeParseWith } from '../lib/validation.ts';
 import { collection, addDoc, updateDoc, doc, Timestamp, query, where, orderBy, limit, onSnapshot, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { signInWithEmailAndPassword, onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';

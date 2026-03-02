@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
+import { safeParseWith } from '../lib/validation.ts';
+import { z } from 'zod';
+
+const UserProfileSchema = z.object({
+  name: z.string().optional(),
+  phone: z.string().optional(),
+  techLevel: z.number().int().min(1).max(3).optional(),
+});
 
 export default function Profile() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -29,18 +37,30 @@ export default function Profile() {
   useEffect(() => {
     if (!user) return;
 
-    const unsubProfile = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setName(data.name || '');
-        setPhone(data.phone || '');
-        setTechLevel(data.techLevel || 1);
+    const unsubProfile = onSnapshot(
+      doc(db, 'users', user.uid),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const raw = docSnap.data();
+          const parsed = safeParseWith(UserProfileSchema, raw);
+
+          if (!parsed.ok) {
+            console.warn('[Profile] Invalid user doc shape:', parsed.issues);
+          }
+
+          const data = parsed.ok ? parsed.value : (raw as Record<string, unknown>);
+
+          setName(typeof data.name === 'string' ? data.name : '');
+          setPhone(typeof data.phone === 'string' ? data.phone : '');
+          setTechLevel(typeof data.techLevel === 'number' ? data.techLevel : 1);
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Error fetching profile:', error);
+        setLoading(false);
       }
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching profile:", error);
-      setLoading(false);
-    });
+    );
 
     return () => unsubProfile();
   }, [user]);
