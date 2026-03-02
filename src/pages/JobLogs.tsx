@@ -3,6 +3,7 @@ import { Camera, Clock, LogIn, Loader2, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { db, auth, storage } from '../lib/firebase';
+import { JobLogSchema, safeParseWith } from '../lib/validation';
 import { collection, addDoc, updateDoc, doc, Timestamp, query, where, orderBy, limit, onSnapshot, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { signInWithEmailAndPassword, onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
@@ -92,11 +93,26 @@ export default function JobLogs() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
         const jobDoc = snapshot.docs[0];
-        const data = jobDoc.data();
-        setActiveJobId(jobDoc.id);
-        setStartTime(data.startTime.toDate());
+        const raw = jobDoc.data();
 
-        const rawPhotos: unknown[] = Array.isArray(data.photos) ? (data.photos as unknown[]) : [];
+        const parsed = safeParseWith(JobLogSchema, raw);
+        if (!parsed.ok) {
+          console.warn('[JobLogs] Invalid job log shape:', parsed.issues);
+        }
+
+        const job = parsed.ok ? parsed.value : (raw as Record<string, unknown>);
+
+        const readStr = (key: string) => {
+          const v = (job as Record<string, unknown>)[key];
+          return typeof v === 'string' ? v : '';
+        };
+
+        setActiveJobId(jobDoc.id);
+        setStartTime((job as { startTime?: { toDate?: () => Date } })?.startTime?.toDate ? (job as { startTime: { toDate: () => Date } }).startTime.toDate() : null);
+
+        const photosValue = (job as { photos?: unknown })?.photos;
+        const rawPhotos: unknown[] = Array.isArray(photosValue) ? photosValue : [];
+
         const normalized: JobPhoto[] = rawPhotos
           .map((p: unknown) => {
             if (typeof p === 'string') return { url: p, kind: 'unsorted' as const };
@@ -114,13 +130,13 @@ export default function JobLogs() {
           .filter((x): x is JobPhoto => !!x);
 
         setJobPhotos(normalized);
-        
+
         // Sync site info from active job
-        setSiteName(data.siteName || '');
-        setAddress(data.address || '');
-        setContactName(data.contactName || '');
-        setContactPhone(data.contactPhone || '');
-        setNotes(data.notes || '');
+        setSiteName(readStr('siteName'));
+        setAddress(readStr('address'));
+        setContactName(readStr('contactName'));
+        setContactPhone(readStr('contactPhone'));
+        setNotes(readStr('notes'));
       } else {
         setActiveJobId(null);
         setStartTime(null);
@@ -306,10 +322,43 @@ export default function JobLogs() {
     }
   };
 
-  const handleClockIn = () => {
+  const getGps = (): Promise<
+    | {
+        lat: number;
+        lng: number;
+        accuracyM: number | null;
+        capturedAt: string; // ISO
+      }
+    | null
+  > => {
+    if (!('geolocation' in navigator)) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          resolve({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracyM: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+            capturedAt: new Date().toISOString()
+          });
+        },
+        () => resolve(null),
+        {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 60_000
+        }
+      );
+    });
+  };
+
+  const handleClockIn = async () => {
     if (!user || isSubmitting) return;
     setIsSubmitting(true);
     setPendingClockAction('in');
+
+    const startLocation = await getGps();
 
     addDoc(collection(db, 'job_logs'), {
       userId: user.uid,
@@ -321,6 +370,7 @@ export default function JobLogs() {
       contactName: contactName,
       contactPhone: contactPhone,
       notes: notes,
+      startLocation,
       photos: []
     }).catch((err) => {
       console.error('Error clocking in:', err);
@@ -330,14 +380,17 @@ export default function JobLogs() {
     });
   };
 
-  const handleClockOut = () => {
+  const handleClockOut = async () => {
     if (!activeJobId || isSubmitting) return;
     setIsSubmitting(true);
     setPendingClockAction('out');
 
+    const endLocation = await getGps();
+
     updateDoc(doc(db, 'job_logs', activeJobId), {
       endTime: Timestamp.now(),
-      status: 'completed'
+      status: 'completed',
+      endLocation
     }).catch((err) => {
       console.error('Error clocking out:', err);
       toast.error('Failed to clock out. Please try again.');
