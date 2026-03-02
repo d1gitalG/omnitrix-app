@@ -12,6 +12,13 @@ type FireTimestamp = {
 
 type JobPhoto = { url: string; kind?: string };
 
+type JobLocation = {
+  lat: number;
+  lng: number;
+  accuracyM: number | null;
+  capturedAt: string; // ISO
+};
+
 interface JobLog {
   id: string;
   userId: string;
@@ -23,6 +30,8 @@ interface JobLog {
   endTime?: FireTimestamp;
   photos?: JobPhoto[]; // Normalized photos
   location?: string;
+  startLocation?: JobLocation | null;
+  endLocation?: JobLocation | null;
   siteName?: string;
   address?: string;
   contactName?: string;
@@ -51,6 +60,11 @@ const Admin: React.FC = () => {
         return null;
       })
       .filter((x): x is JobPhoto => !!x);
+  };
+
+  const mapsUrl = (loc: JobLocation) => {
+    const q = `${loc.lat},${loc.lng}`;
+    return `https://www.google.com/maps?q=${encodeURIComponent(q)}`;
   };
 
   const getJobType = (job: JobLog) => (job.jobType || job.type || '').toString();
@@ -200,6 +214,22 @@ const Admin: React.FC = () => {
                       </p>
                     )}
                     {job.notes && <p className="text-zinc-500 text-xs mt-1 line-clamp-2">{job.notes}</p>}
+
+                    {job.startLocation && (
+                      <p className="text-zinc-500 text-xs mt-1">
+                        <a
+                          href={mapsUrl(job.startLocation)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline underline-offset-2 hover:text-green-400"
+                        >
+                          GPS (start)
+                        </a>
+                        {typeof job.startLocation.accuracyM === 'number'
+                          ? ` • ${Math.round(job.startLocation.accuracyM)}m`
+                          : ''}
+                      </p>
+                    )}
                   </div>
                   <span className="text-xs text-zinc-500 whitespace-nowrap">
                     Started{' '}
@@ -261,6 +291,29 @@ const Admin: React.FC = () => {
                       </p>
                     )}
                     {job.notes && <p className="text-zinc-600 text-xs mt-1 line-clamp-2">{job.notes}</p>}
+
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+                      {job.startLocation && (
+                        <a
+                          href={mapsUrl(job.startLocation)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-zinc-500 text-xs underline underline-offset-2 hover:text-green-400"
+                        >
+                          GPS (start)
+                        </a>
+                      )}
+                      {job.endLocation && (
+                        <a
+                          href={mapsUrl(job.endLocation)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-zinc-500 text-xs underline underline-offset-2 hover:text-green-400"
+                        >
+                          GPS (end)
+                        </a>
+                      )}
+                    </div>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-zinc-500 whitespace-nowrap">
